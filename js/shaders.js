@@ -90,7 +90,7 @@ layout(location=0) in vec2 aUV;
 uniform mat4 uVP;
 uniform float uTime;
 uniform vec4 uW[8];
-uniform float uQ[8];
+uniform float uQ[8],uPhase[8];
 uniform sampler2D uRip;
 uniform float uRipR;
 out vec3 vWorld;
@@ -106,7 +106,7 @@ void main(){
     vec4 w=uW[i]; float k=w.z; float L=6.2831853/k;
     float f=smoothstep(1.5*sp,4.5*sp,L);
     float om=sqrt(9.81*k);
-    float th=k*dot(w.xy,p0)-om*uTime+float(i)*2.399;
+    float th=k*dot(w.xy,p0)-om*uTime+uPhase[i];
     float sn=sin(th),cs=cos(th);
     float q=uQ[i]*f; float A=w.w*f;
     disp.xz+=w.xy*(q/k)*cs;
@@ -237,7 +237,13 @@ void main(){
   if(sc.a>0.5){
     float thick=max(zS-zW,0.0)*dist/zW;
     vec3 tr=exp(-thick*vec3(0.45,0.11,0.065)*(0.8+0.5*uRough));
-    refr=dec(sc.rgb)*tr+body*(1.0-tr);
+    /* Light refracted through a moving surface focuses into broken caustic
+       filaments on shallow submerged terrain and objects, not on the sky. */
+    vec2 cp=vWorld.xz*0.32+along*uTime*0.10;
+    float c0=texture(uDetail,cp).a, c1=texture(uDetail,cp*1.47+vec2(-uTime*0.05,3.4)).a;
+    float focus=1.0-smoothstep(0.015,0.10,abs(c0-c1));
+    float caustic=focus*exp(-thick*0.45)*max(L.y,0.0)*(1.0-uStorm)*0.32;
+    refr=dec(sc.rgb)*tr*(1.0+caustic)+body*(1.0-tr);
   }
 
   vec3 col=mix(refr,refl,F);
@@ -263,7 +269,11 @@ void main(){
   float fn=f0*0.50+f1*0.34+f2*0.16;
   float bubbles=smoothstep(0.41,0.66,fn+0.08*(f1-0.5));
   float filaments=1.0-smoothstep(0.035,0.13,abs(f0-0.51+(f1-0.5)*0.35));
-  float coverage=clamp(vFoam*0.9+min(foamSim,0.72)*0.9+shoreFoam,0.0,1.0);
+  /* Long, intermittent windrows appear only in a rough sea; they follow
+     the wind instead of repeating as circular patches. */
+  float streak=texture(uDetail,windUV*vec2(0.55,0.8)+vec2(7.2,-1.4)).a;
+  float windrow=smoothstep(0.63,0.78,streak)*smoothstep(0.55,0.9,uSeaState)*0.17;
+  float coverage=clamp(vFoam*0.9+min(foamSim,0.72)*0.9+shoreFoam+windrow,0.0,1.0);
   float fm=clamp(coverage*(0.48*bubbles+0.33*filaments)+coverage*coverage*0.22*bubbles,0.0,0.9);
   float foamLight=0.40*uAmbLum+0.20*uSunLum*max(dot(N,L),0.0)+0.08*uStorm;
   vec3 foamCol=vec3(0.90,0.94,0.95)*foamLight*(0.80+0.35*fn);
@@ -312,7 +322,7 @@ void main(){
 const BALL_FS = HDR + COMMON + `
 in vec3 vWorld; in vec3 vWN; in vec3 vLocal;
 out vec4 o;
-uniform vec3 uCamEff; uniform float uType,uMode,uMirror,uPlane;
+uniform vec3 uCamEff; uniform float uType,uMode,uMirror,uPlane,uWet;
 const vec3 BC[6]=vec3[6](vec3(0.85,0.07,0.08),vec3(0.96,0.96,0.94),vec3(0.06,0.25,0.85),vec3(0.98,0.80,0.10),vec3(0.96,0.96,0.94),vec3(0.07,0.62,0.22));
 vec2 dn(vec2 uv){vec3 d=texture(uDetail,uv).xyz*2.0-1.0;return d.xz;}
 void main(){
@@ -349,10 +359,12 @@ void main(){
   } else if(t==3){
     float n=texture(uDetail,l.xz*1.3+0.3).a;
     float r=length(l.xz)+0.06*n;
-    float rings=0.5+0.5*sin(r*34.0+n*4.0);
-    alb=mix(vec3(0.40,0.22,0.08),vec3(0.66,0.43,0.20),rings);
-    alb*=0.9+0.2*texture(uDetail,l.xy*9.0).a;
-    rough=0.42;
+    float rings=0.5+0.5*sin(r*34.0+n*4.0+0.7*sin(l.y*4.0));
+    float grain=texture(uDetail,vec2(r*5.0,l.y*1.8)+n).a;
+    alb=mix(vec3(0.31,0.15,0.045),vec3(0.64,0.40,0.17),rings);
+    alb*=0.84+0.32*grain;
+    bn=(dn(l.xy*8.0)+dn(l.zy*8.0))*0.035;
+    rough=0.46;
   } else if(t==4){
     float n=texture(uDetail,l.xy*1.4+vec2(0.3)).a+texture(uDetail,l.zy*1.1).a;
     alb=mix(vec3(0.01,0.02,0.12),vec3(0.28,0.04,0.46),smoothstep(0.5,1.3,n));
@@ -372,30 +384,41 @@ void main(){
     alb=vec3(0.01,0.05,0.06);
     rough=0.25; f0=0.05;
   } else {
-    alb=vec3(0.86,0.89,0.94); metal=1.0; rough=0.05; f0=0.9;
+    /* Fine brushed variation in the steel, rather than a featureless mirror. */
+    float brush=texture(uDetail,vec2(l.y*13.0,l.x*1.6+l.z*1.4)).a;
+    alb=vec3(0.74,0.79,0.84)*(0.94+0.12*brush); metal=1.0; rough=0.11; f0=0.9;
   }
   if(bn!=vec2(0.0)){
-    vec3 T=normalize(cross(N,vec3(0.31,0.93,0.17))); vec3 B=cross(N,T);
+    vec3 axis=abs(N.y)>0.95?vec3(1.0,0.0,0.0):vec3(0.0,1.0,0.0);
+    vec3 T=normalize(cross(axis,N)); vec3 B=cross(N,T);
     N=normalize(N+T*bn.x+B*bn.y);
   }
+  /* Water and rain leave a darker, smoother film that gradually dries as
+     the physics wetness decays. Submerged portions always remain wet. */
+  float wet=max(clamp(uWet,0.0,1.0),max(uRain*0.55,1.0-smoothstep(uPlane-0.02,uPlane+0.02,vWorld.y)));
+  rough=mix(rough,max(0.065,rough*0.42),wet*0.72);
+  alb*=1.0-wet*0.10*(1.0-metal);
   vec3 V=normalize(uCamEff-vWorld);
-  float nv=max(dot(N,V),0.0);
-  float ndl=max(dot(N,uLight),0.0);
+  float nv=max(dot(N,V),0.001), nl=max(dot(N,uLight),0.0);
   vec3 hemi=mix(uHorizon*0.45+vec3(0.02,0.05,0.07),uZenith*1.3+vec3(0.05),N.y*0.5+0.5);
-  vec3 diff=alb*(uSunCol*ndl*0.5+hemi*1.25);
-  float shin=clamp(2.0/(rough*rough)-2.0,4.0,3000.0);
-  vec3 H=normalize(uLight+V); float nh=max(dot(N,H),0.0);
-  float vh=max(dot(V,H),0.0);
+  vec3 H=normalize(uLight+V); float nh=max(dot(N,H),0.0), vh=max(dot(V,H),0.0);
   vec3 F0v=mix(vec3(f0),alb,metal);
   vec3 Fh=F0v+(1.0-F0v)*pow(1.0-vh,5.0);
-  vec3 spec=pow(nh,shin)*(shin+8.0)/(8.0*3.14159)*Fh*ndl*uSunCol*0.45;
+  /* GGX/Smith/Schlick: separate diffuse and energy-conserving specular. */
+  float alpha=max(0.035,rough*rough), a2=alpha*alpha;
+  float denom=nh*nh*(a2-1.0)+1.0;
+  float D=a2/(3.14159265*denom*denom);
+  float k=(rough+1.0)*(rough+1.0)*0.125;
+  float Gv=nv/(nv*(1.0-k)+k), Gl=nl/(nl*(1.0-k)+k);
+  vec3 spec=uSunCol*Fh*(D*Gv*Gl/(4.0*nv+0.001))*0.65;
   vec3 R=reflect(-V,N);
   vec3 env;
   if(R.y>=0.0) env=skyCol(R,1.0);
   else env=mix(vec3(0.02,0.07,0.10)*uAmbLum+uHorizon*0.08,uHorizon*0.5,smoothstep(-0.25,0.0,R.y));
+  env=mix(env,hemi*0.55,rough*rough*0.65);
   vec3 Fr=F0v+(1.0-F0v)*pow(1.0-nv,5.0);
-  float gloss=(1.0-rough); gloss*=gloss;
-  vec3 col=diff*(1.0-metal)*(1.0-Fr*gloss*0.5)+env*Fr*gloss+spec*mix(vec3(1.0),alb,metal);
+  vec3 diff=alb*(uSunCol*nl*0.44+hemi*1.05)*(1.0-metal)*(1.0-Fr);
+  vec3 col=diff+env*Fr*(0.7+0.3*(1.0-rough))+spec;
   /* glow orb: its own light, strongest when the surroundings are dark */
   if(t==7){
     float pulse=0.75+0.25*sin(uTime*2.2+l.x*2.0+l.z*1.5);

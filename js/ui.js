@@ -21,6 +21,8 @@ function toast(msg){
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
   type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, islandSeed:0,
+  islandStyle:'wild', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1,
+  islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandBirds:true, islandWind:1, islandSurf:1,
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
   fov:50, orbit:false, follow:false,
@@ -64,11 +66,27 @@ const CONTROLS=[
   {tab:'scene',t:'scenes'},
   {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
   {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
-  {tab:'scene',t:'note',text:'Storms and high swells send breakers and spray up the exposed cliffs.'},
+  {tab:'scene',t:'note',text:'Explore and customise your coast in the Islands tab.'},
   {tab:'scene',t:'seg',k:'launch',label:'Tapping the sea',opts:[['drop','Drops a ball'],['throw','Throws a ball']]},
   {tab:'scene',t:'range',k:'throwSpeed',label:'Throw speed',min:4,max:32,step:1,fmt:v=>v+' m/s'},
   {tab:'scene',t:'range',k:'size',label:'Ball size',min:0.5,max:2.2,step:0.01,fmt:v=>v.toFixed(1)+'×',dock:true},
   {tab:'scene',t:'range',k:'maxBalls',label:'Ball limit',min:5,max:80,step:1,fmt:v=>String(v)},
+
+  {tab:'islands',t:'toggle',k:'islands',label:'Island archipelago',sub:'Generate a coast to explore'},
+  {tab:'islands',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
+  {tab:'islands',t:'seg',k:'islandStyle',label:'Coast type',opts:[['wild','Wild'],['coves','Coves'],['highlands','Highlands']]},
+  {tab:'islands',t:'seg',k:'islandCount',label:'Island count',opts:[[3,'3'],[4,'4'],[5,'5']]},
+  {tab:'islands',t:'range',k:'islandRelief',label:'Mountain height',min:0.6,max:1.45,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'range',k:'islandCoast',label:'Coastline detail',min:0.5,max:1.2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'range',k:'islandBeach',label:'Coves and beaches',min:0.5,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'range',k:'islandTrees',label:'Forest density',min:0,max:1.7,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandTreeScale',label:'Tree height',min:0.7,max:1.4,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'range',k:'islandGrass',label:'Coastal grasses',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandRocks',label:'Boulders',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'toggle',k:'islandBirds',label:'Seabirds',sub:'Flocks shelter during storms and at night'},
+  {tab:'islands',t:'range',k:'islandWind',label:'Vegetation wind response',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandSurf',label:'Cliff surf',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'note',text:'The coast and its wildlife are seeded. Terrain controls rebuild the coast; planting controls update its details. New islands choose a new seed.'},
 
   {tab:'sky',t:'info'},
   {tab:'sky',t:'seg',k:'season',label:'Season',opts:[[0,'Spring'],[1,'Summer'],[2,'Autumn'],[3,'Winter']]},
@@ -106,7 +124,7 @@ const CONTROLS=[
   {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
   {tab:'system',t:'note',text:'Shortcuts: Space drop · I islands · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema mode · O auto-orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
-const TABS=[['scene','Scene'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
+const TABS=[['scene','Scene'],['islands','Islands'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
 
 function validValue(k,v){
@@ -129,7 +147,30 @@ function loadSettings(){
   return s;
 }
 const S=loadSettings();
-let saveTimer=0;
+let saveTimer=0, islandBuildTimer=0, islandRebuildMask=0, settingsBooting=true;
+function currentIslandOptions(){
+  return {style:S.islandStyle,count:S.islandCount,relief:S.islandRelief,coast:S.islandCoast,beach:S.islandBeach,
+    trees:S.islandTrees,treeScale:S.islandTreeScale,grass:S.islandGrass,rocks:S.islandRocks,
+    birds:S.islandBirds,wind:S.islandWind,surf:S.islandSurf};
+}
+/* Slider drags are coalesced; planting-only changes do not rebuild the
+   heightfield, clear surf or disturb the camera and balls. */
+function cancelIslandRebuild(){ clearTimeout(islandBuildTimer); islandBuildTimer=0; islandRebuildMask=0; }
+function queueIslandRebuild(mask){
+  if(settingsBooting||!S.islands) return;
+  islandRebuildMask|=mask; clearTimeout(islandBuildTimer);
+  islandBuildTimer=setTimeout(()=>{
+    const pending=islandRebuildMask; islandBuildTimer=0; islandRebuildMask=0;
+    if(!S.islands) return;
+    const options=islandConfig(currentIslandOptions());
+    if(pending&1) generateIslands(S.islandSeed,options);
+    else {
+      islands.options=options;
+      if(pending&2) rebuildIslandTrees(options);
+      if(pending&4) rebuildIslandDetails(options);
+    }
+  },220);
+}
 function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY,JSON.stringify(S)); }catch(e){} },400); }
 
 /* ---- push a setting into the engine ---- */
@@ -148,11 +189,18 @@ function apply(k){
     case 'launch': launchMode=v; break;
     case 'throwSpeed': throwSpeed=v; break;
     case 'islands':
-      if(v) generateIslands(S.islandSeed); else {
+      cancelIslandRebuild();
+      if(v) generateIslands(S.islandSeed,currentIslandOptions()); else {
         if(islands.active) for(const b of balls) if(Math.hypot(b.x,b.z)>28) b.islandRecovery=true;
         removeIslands(); cliffEvents.length=0;
       }
       resetCamera(); break;
+    case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': queueIslandRebuild(1); break;
+    case 'islandTrees': case 'islandTreeScale': queueIslandRebuild(2); break;
+    case 'islandGrass': case 'islandRocks': queueIslandRebuild(4); break;
+    case 'islandBirds': if(islands.active) islands.options.birds=v; break;
+    case 'islandWind': if(islands.active) islands.options.wind=v; break;
+    case 'islandSurf': if(islands.active) islands.options.surf=v; break;
     case 'season': env.season=v; break;
     case 'weather': env.forceSnow=!!(WEATHERS[v]&&WEATHERS[v].snow); break;
     case 'hour': env.hour=v; break;
@@ -349,7 +397,7 @@ function toggleIslands(){
 function newIslands(){
   hideHint();
   if(!S.islands) userSet('islands',true);
-  else { setVal('islandSeed',nextIslandSeed()); generateIslands(S.islandSeed); cliffEvents.length=0; resetCamera(); }
+  else { cancelIslandRebuild(); setVal('islandSeed',nextIslandSeed()); generateIslands(S.islandSeed,currentIslandOptions()); cliffEvents.length=0; resetCamera(); }
   toast('A new archipelago');
 }
 function islandStorm(){
@@ -535,6 +583,7 @@ function updateStats(fps,nBalls,res,hs){
 
 /* ---- start-up: push every stored setting into the engine and the widgets ---- */
 for(const k in DEFAULTS){ apply(k); refresh(k); }
+settingsBooting=false;
 selectType(S.type,true);
 showTab('scene');
 /* start with the eased environment already at its targets (no fade-in from defaults) */

@@ -93,7 +93,17 @@ let windAng=1.1;   /* direction the wind (and the waves) travel towards, radians
 const WL=[31,22.5,15,9.8,6.4,4.1,2.5,1.4];
 const WOFF=[0,0.9,-0.75,0.45,-1.1,1.3,-1.5,2.0];
 const wv=WL.map((Lw,i)=>{const k=2*Math.PI/Lw,a=windAng+WOFF[i];return{L:Lw,k,om:Math.sqrt(G*k),dx:Math.sin(a),dz:Math.cos(a),ph:i*2.399,A:0,q:0,qk:0};});
-const uWArr=new Float32Array(32), uQArr=new Float32Array(8);
+const uWArr=new Float32Array(32), uQArr=new Float32Array(8), uPhaseArr=new Float32Array(8);
+/* One phase set is shared by CPU physics, water vertices and coastal foam.
+   Different sessions do not all begin on the same repeating swell. The
+   phases are not reset during island regeneration, avoiding a surface jump. */
+function setWaveSeed(seed){
+  for(let i=0;i<8;i++){
+    wv[i].ph=hash2(i,seed|0,871)*Math.PI*2;
+    uPhaseArr[i]=wv[i].ph;
+  }
+}
+setWaveSeed(Math.floor(Math.random()*4294967296));
 let waveA0=0.3;
 function updateWaves(s){
   for(let i=0;i<8;i++){
