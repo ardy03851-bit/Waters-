@@ -136,8 +136,8 @@ out vec4 o;
 uniform vec3 uCam,uCamR,uCamF;
 uniform float uRipR,uRipN,uA0;
 uniform vec2 uRes,uNF;
-uniform float uHQ;
-uniform sampler2D uRip,uScene,uSceneD,uRefl;
+uniform float uHQ,uIslands,uSeaState;
+uniform sampler2D uRip,uScene,uSceneD,uRefl,uIslandMap;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 void main(){
   vec3 toCam=uCam-vWorld; float dist=length(toCam); vec3 V=toCam/dist;
@@ -199,6 +199,23 @@ void main(){
            +vec3(0.0,0.05,0.06)*uAmbLum*hh;
   body*=mix(vec3(1.0),uHorizon*1.4,0.25);
 
+  /* The island height/distance map adds clear, shoaling water and a broken
+     wash along beaches and cliffs; deep open water remains unchanged. */
+  float shoreFoam=0.0;
+  if(uIslands>0.5){
+    vec2 imuv=vWorld.xz/160.0+0.5;
+    if(all(greaterThan(imuv,vec2(0.0)))&&all(lessThan(imuv,vec2(1.0)))){
+      vec2 land=texture(uIslandMap,imuv).rg;
+      float floorY=land.r*40.0-12.0;
+      float depth=max(vWorld.y-floorY,0.0), coast=land.g*12.0;
+      float shallow=(1.0-smoothstep(0.8,6.0,depth))*(1.0-smoothstep(2.5,10.0,coast));
+      body=mix(body,body*0.65+uTurq*(0.15+0.24*uAmbLum)+vec3(0.012,0.045,0.027),shallow*0.65);
+      float wavelet=0.5+0.5*sin(coast*3.5-uTime*(1.7+uSeaState)+texture(uDetail,vWorld.xz*0.15).a*3.0);
+      float wash=(1.0-smoothstep(0.25,3.0+uSeaState*1.7,coast));
+      shoreFoam=wash*(0.40+0.35*uSeaState)*(0.65+0.35*wavelet);
+    }
+  }
+
   /* refraction of submerged objects */
   float zW=linZ(gl_FragCoord.z);
   vec3 refr=body;
@@ -228,7 +245,7 @@ void main(){
   vec3 spec=uSunCol*min(D*Fs/(4.0*max(nv,0.08)),22.0)*smoothstep(0.0,0.12,nl)*step(0.0,L.y);
 
   /* foam */
-  float foamAmt=clamp(vFoam+min(foamSim,0.62),0.0,1.0);
+  float foamAmt=clamp(vFoam+min(foamSim,0.62)+shoreFoam,0.0,1.0);
   float fn=texture(uDetail,vWorld.xz*0.55+vec2(uTime*0.01,-uTime*0.013)).a*0.6
           +texture(uDetail,vWorld.xz*1.9-vec2(uTime*0.02,0.0)).a*0.4;
   float fm=smoothstep(1.0-foamAmt*1.15,1.0-foamAmt*1.15+0.18,fn);
@@ -447,7 +464,7 @@ void main(){
     float n=texture(uDetail,vQ*0.21+vec2(vSeed*7.31,vSeed*3.17)).a;
     float a=pow(1.0-d,1.6)*smoothstep(0.08,0.70,n+0.38*(1.0-d))*vA;
     float fs=pow(max(dot(-V,uLight),0.0),6.0);
-    vec3 c=vec3(0.93,0.96,1.0)*(0.40*uAmbLum+uSunLum*(0.15+0.45*fs));
+    vec3 c=vec3(0.93,0.96,1.0)*(0.40*uAmbLum+uSunLum*(0.15+0.45*fs)+0.09*uStorm);
     c=mix(c,c*uHorizon*1.4,0.18);
     o=vec4(tonemap(c)*a,a);
     return;
@@ -464,7 +481,7 @@ void main(){
   float wob2=texture(uDetail,n2*0.53+vec2(vSeed*7.7,vSeed*17.3)+vec2(-uTime*0.7,uTime*0.5)).a-0.5;
   float de=d+wob*(0.10+0.30*wh)+wob2*0.10*wh;
   if(de>1.0) discard;
-  float nz=sqrt(1.0-d);
+  float nz=sqrt(max(1.0-d,0.0));
   vec3 N=normalize(vSide*n2.x+vAxis*n2.y+V*nz);
   /* clear water: inverted refracted image of the surroundings + fresnel reflection */
   float F=0.03+0.97*pow(1.0-nz,4.0);
@@ -475,7 +492,7 @@ void main(){
   glint*=step(0.0,uLight.y);
   /* aerated water: diffuse white with soft volume shading */
   float ndl=max(dot(N,uLight),0.0);
-  vec3 white=vec3(0.94,0.97,1.0)*(0.42*uAmbLum+0.25*uSunLum*(0.30+0.70*ndl));
+  vec3 white=vec3(0.94,0.97,1.0)*(0.42*uAmbLum+0.25*uSunLum*(0.30+0.70*ndl)+0.12*uStorm);
   white=mix(white,white*uHorizon*1.4,0.12);
   vec3 col=mix(clear,white,wh);
   float aClear=mix(0.42,0.95,pow(1.0-nz,1.5));
