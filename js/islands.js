@@ -153,7 +153,8 @@ function makeIslandMap(){
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RG8,n,n,0,gl.RG,gl.UNSIGNED_BYTE,data);
 }
 
-/* Textures start with sensible fallback colours and load on idle or first use.
+/* Textures start with sensible fallback colours and load on first use. Keeping
+   unused island textures out of the initial GPU allocation helps small devices.
    All albedos are local, seamless, and mipmapped; no external service needed. */
 function islandTexture(rgb,file,repeat){
   const tex=gl.createTexture(); gl.activeTexture(gl.TEXTURE11); gl.bindTexture(gl.TEXTURE_2D,tex);
@@ -163,10 +164,18 @@ function islandTexture(rgb,file,repeat){
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,repeat?gl.REPEAT:gl.CLAMP_TO_EDGE);
   const image=new Image();
   image.onload=()=>{
+    if(gl.isContextLost()) return;
+    let source=image;
+    if(typeof window!=='undefined'&&window.AquaBoot&&window.AquaBoot.safeMode&&Math.max(image.width,image.height)>512){
+      const ratio=512/Math.max(image.width,image.height), smaller=document.createElement('canvas');
+      smaller.width=Math.max(1,Math.round(image.width*ratio)); smaller.height=Math.max(1,Math.round(image.height*ratio));
+      const ctx=smaller.getContext('2d');
+      if(ctx){ ctx.drawImage(image,0,0,smaller.width,smaller.height); source=smaller; }
+    }
     gl.activeTexture(gl.TEXTURE11); gl.bindTexture(gl.TEXTURE_2D,tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+    try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,source); }
+    finally{ gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false); }
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
     const aniso=gl.getExtension('EXT_texture_filter_anisotropic');
@@ -185,10 +194,6 @@ function loadIslandTextures(){
     talus:islandTexture([105,94,77,255],'talus.jpg',true),
     pine:islandTexture([0,0,0,0],'pine.png',false)
   };
-}
-if(typeof window!=='undefined'){
-  if(window.requestIdleCallback) window.requestIdleCallback(loadIslandTextures,{timeout:4000});
-  else window.setTimeout(loadIslandTextures,1800);
 }
 
 const ISLAND_VS=HDR+`
@@ -299,7 +304,7 @@ void main(){
   col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
 }`;
-const pIsland=program(ISLAND_VS,ISLAND_FS), pTree=program(TREE_VS,TREE_FS);
+const pIsland=program(ISLAND_VS,ISLAND_FS,'island'), pTree=program(TREE_VS,TREE_FS,'tree');
 
 function makeIslandTrees(random,options){
   const data=[], normal={nx:0,ny:1,nz:0};

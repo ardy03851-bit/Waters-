@@ -30,12 +30,25 @@ The coastal surface and tree textures in `assets/` are local; no external textur
 
 Motion blur uses depth-aware camera reprojection and visible ball motion, with exposure adjusted for frame time. It does not stretch the ball geometry, and history is reset after a resize or a long frame gap. Reduced-motion preferences disable motion blur by default. On slower devices, lower the render quality or splash detail.
 
+Render targets are limited by the device's WebGL dimensions and a pixel budget, especially on high-DPI touch devices. If a framebuffer allocation fails, Aqua releases the partial targets and retries at a smaller resolution. The canvas itself does not allocate redundant depth or multisample buffers: the scene's depth is stored in the offscreen targets used for refraction and motion blur.
+
+## Graphics recovery
+
+If the browser loses its WebGL context, rendering pauses and Aqua attempts one automatic restart when the context is restored, or after a short wait if the visible tab is not restored. A shader failure without a driver diagnostic is also retried once. Recovery uses low-memory graphics for that page visit: a smaller resolution budget, half-resolution reflections and smaller island textures. Your saved quality and island settings are not changed; reload normally to use them again. If recovery is not possible, the error screen offers **Retry** and **Retry in low-memory mode**, plus the original graphics diagnostic. Repeated failures never trigger an endless reload or error loop. If WebGL 2 cannot be created at all, update the browser and enable hardware acceleration.
+
 ## Tests
 
-Run the CPU-side tests for seeded terrain, island detail and collision, wave synchronization, and bounded surf and particle lifecycles with Node.js:
+Run the Node.js tests for graphics startup and recovery, seeded terrain, island detail and collision, wave synchronization, and bounded surf and particle lifecycles:
 
 ```sh
 node --test tests/*.test.js
 ```
 
-The shaders and rendering passes also need a WebGL 2 capable browser for visual testing.
+For the optional end-to-end WebGL tests, start the static server in another terminal, then use Playwright Core and a WebGL 2-capable Chromium installation (no dependency is needed by the site itself):
+
+```sh
+npm install --prefix /tmp/aqua-browser-test --no-save playwright-core
+NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/webgl-browser.js
+```
+
+Set `AQUA_URL` if the server is not at `http://127.0.0.1:8000/`. On headless machines without a GPU, Chromium may need software-rendering flags, for example `CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader"`. The browser tests exercise real shader compilation, mobile sizing and touch controls, rendering, framebuffer retry, and context-loss recovery; they do not replace visual checks on target devices.

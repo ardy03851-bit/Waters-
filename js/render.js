@@ -2,8 +2,9 @@
 /* ============================================================
    Rendering
    ============================================================ */
-const maxPR=Math.min(window.devicePixelRatio||1,2);
-let pr=Math.min(maxPR,1.5), prCeil=maxPR, curW=0, curH=0;
+const safeGraphics=window.AquaBoot.safeMode;
+const maxPR=Math.min(window.devicePixelRatio||1,safeGraphics?0.75:2);
+let pr=Math.min(maxPR,1.5), prCeil=maxPR, curW=0, curH=0, actualPR=pr;
 /* 'auto' adapts the resolution to hold 60 fps; the other modes pin it */
 let quality='auto', paused=false;
 /* realism effects (set from the UI): camera + object motion blur, lens effects */
@@ -12,18 +13,67 @@ let motionBlurOn=true, blurStrength=1, lensFxOn=true;
 let hqMode=false;
 /* previous frame's view-projection, for the motion-blur reprojection */
 const prevVPm=new Float32Array(16);
-let havePrev=false, frameInterval=1/60;
+let havePrev=false, frameInterval=1/60, rendererStarted=false;
 const QUALITY_PR={low:0.6,medium:0.85,high:1.0,ultra:Math.max(1,maxPR)};
+/* Several full-size colour/depth/motion buffers are needed. Keep their total
+   size reasonable on high-DPI devices, and never exceed hardware dimensions. */
+const coarsePointer=matchMedia('(pointer: coarse)').matches||matchMedia('(any-pointer: coarse)').matches;
+const targetPixels=safeGraphics?650000:(coarsePointer?1800000:4200000);
+const texLimit=gl.getParameter(gl.MAX_TEXTURE_SIZE)||2048;
+const rbLimit=gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)||2048;
+const viewportLimit=gl.getParameter(gl.MAX_VIEWPORT_DIMS)||[2048,2048];
+const targetMaxW=Math.min(texLimit,rbLimit,viewportLimit[0]);
+const targetMaxH=Math.min(texLimit,rbLimit,viewportLimit[1]);
+let allocationPixelLimit=Infinity;
 function setQuality(q){
   quality=QUALITY_PR[q]?q:'auto';
-  if(quality!=='auto') pr=Math.min(QUALITY_PR[quality],Math.max(1,maxPR)); else { prCeil=maxPR; pr=Math.min(maxPR,1.25); }
+  if(quality!=='auto') pr=Math.min(QUALITY_PR[quality],safeGraphics?maxPR:Math.max(1,maxPR));
+  else { prCeil=maxPR; pr=Math.min(maxPR,1.25); }
   resize();
 }
-function resize(){
-  const w=Math.max(2,Math.floor(innerWidth*pr)), h=Math.max(2,Math.floor(innerHeight*pr));
-  if(w!==curW||h!==curH){ curW=w;curH=h;canvas.width=w;canvas.height=h; makeTargets(w,h); havePrev=false; }
+function resize(force=false){
+  if(!rendererStarted||(window.AquaBoot.state!=='loading'&&window.AquaBoot.state!=='running')) return;
+  if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+  const vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
+  const scale=Math.min(pr,targetMaxW/vw,targetMaxH/vh,Math.sqrt(Math.min(targetPixels,allocationPixelLimit)/(vw*vh)));
+  let w=Math.max(2,Math.floor(vw*scale)), h=Math.max(2,Math.floor(vh*scale));
+  if(!force&&w===curW&&h===curH) return;
+  /* Release existing FBOs before changing the drawing buffer to keep peak
+     memory down. A failed allocation is retried, not rendered into. */
+  disposeTargets(); curW=curH=0; havePrev=false;
+  let reduced=false;
+  for(let attempt=0;attempt<4;attempt++){
+    try{
+      if(canvas.width!==w) canvas.width=w;
+      if(canvas.height!==h) canvas.height=h;
+      if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+      const dw=gl.drawingBufferWidth, dh=gl.drawingBufferHeight;
+      if(dw<w||dh<h){
+        const ratio=Math.min(dw/w,dh/h);
+        if(!(ratio>0)){
+          const error=new Error('The browser could not allocate the graphics drawing buffer.');
+          error.code='FRAMEBUFFER_INCOMPLETE'; throw error;
+        }
+        w=Math.max(2,Math.floor(w*ratio)); h=Math.max(2,Math.floor(h*ratio)); reduced=true;
+        if(attempt<3) continue;
+        throw new Error('The browser could not allocate the requested graphics drawing buffer.');
+      }
+      makeTargets(w,h);
+      if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+      curW=w; curH=h; actualPR=Math.min(w/vw,h/vh);
+      if(reduced){
+        allocationPixelLimit=Math.min(allocationPixelLimit,w*h);
+        console.warn('Aqua: graphics allocation was reduced to '+w+' × '+h+'.');
+      }
+      return;
+    }catch(error){
+      if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+      if(error.code!=='FRAMEBUFFER_INCOMPLETE'||attempt===3||(w<=2&&h<=2)) throw error;
+      w=Math.max(2,Math.floor(w*0.7)); h=Math.max(2,Math.floor(h*0.7)); reduced=true;
+    }
+  }
 }
-addEventListener('resize',resize); addEventListener('orientationchange',()=>setTimeout(resize,200));
+addEventListener('resize',()=>resize()); addEventListener('orientationchange',()=>setTimeout(()=>resize(),200));
 
 function drawBalls(mode,mirror){
   if(balls.length===0) return;
@@ -221,56 +271,70 @@ function screenshot(done){
    ============================================================ */
 let lastT=performance.now(), acc=0, ema=16.7, frameN=0, lastStat=0, cool=0, ceilTimer=0, fpsShown=60;
 function frame(now){
-  requestAnimationFrame(frame);
-  const rdtMs=now-lastT; lastT=now; if(!(rdtMs>0)) return;
-  frameInterval=rdtMs/1000;
-  if(frameInterval>0.2) havePrev=false;
-  const dt=Math.min(frameInterval,0.05);
-  ema=ema*0.94+Math.min(rdtMs,100)*0.06; frameN++; cool--; ceilTimer+=dt;
-  if(quality==='auto'){
-    /* enhanced graphics keeps a much higher resolution floor before scaling down */
-    const floorPR=hqMode?0.9:0.65;
-    if(cool<=0&&frameN>40){
-      if(ema>20.5&&pr>floorPR+0.001){ prCeil=Math.max(floorPR+0.05,pr-0.05); pr=Math.max(floorPR,pr-0.12); cool=60; }
-      else if(ema<17.6&&pr<prCeil-0.001){ pr=Math.min(prCeil,pr+0.06); cool=120; }
+  if(!window.AquaBoot.canRender()) return;
+  try{
+    if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+    const rdtMs=now-lastT; lastT=now;
+    if(!(rdtMs>0)){ requestAnimationFrame(frame); return; }
+    frameInterval=rdtMs/1000;
+    if(frameInterval>0.2) havePrev=false;
+    const dt=Math.min(frameInterval,0.05);
+    ema=ema*0.94+Math.min(rdtMs,100)*0.06; frameN++; cool--; ceilTimer+=dt;
+    if(quality==='auto'){
+      /* enhanced graphics keeps a much higher resolution floor before scaling down */
+      const floorPR=hqMode?0.9:0.65;
+      if(cool<=0&&frameN>40){
+        if(ema>20.5&&pr>floorPR+0.001){ prCeil=Math.max(floorPR+0.05,pr-0.05); pr=Math.max(floorPR,pr-0.12); cool=60; }
+        else if(ema<17.6&&pr<prCeil-0.001){ pr=Math.min(prCeil,pr+0.06); cool=120; }
+      }
+      if(ceilTimer>25){ ceilTimer=0; prCeil=Math.min(maxPR,prCeil+0.1); }
     }
-    if(ceilTimer>25){ ceilTimer=0; prCeil=Math.min(maxPR,prCeil+0.1); }
-  }
-  resize();
+    resize();
+    if(!window.AquaBoot.canRender()) return;
 
-  const sdt=paused?0:dt*timeScale;      /* simulated time this frame */
-  updateEnv(dt,sdt);
-  updateWaves(sea);
-  updateCamera(dt);
+    const sdt=paused?0:dt*timeScale;      /* simulated time this frame */
+    updateEnv(dt,sdt);
+    updateWaves(sea);
+    updateCamera(dt);
 
-  acc+=sdt; let steps=0;
-  while(acc>=H&&steps<12){ physicsStep(); acc-=H; steps++; }
-  if(steps>=12) acc=0;
-  updateIslandSurf(sdt);
-  updateWindStreaks(sdt);
-  particlesStep(sdt);
-  updatePrecip(sdt);
-  uploadRipple();
-  Hooks.run('frame',dt,sdt);
-  render();
-  if(typeof audioFrame==='function') audioFrame(dt);
+    acc+=sdt; let steps=0;
+    while(acc>=H&&steps<12){ physicsStep(); acc-=H; steps++; }
+    if(steps>=12) acc=0;
+    updateIslandSurf(sdt);
+    updateWindStreaks(sdt);
+    particlesStep(sdt);
+    updatePrecip(sdt);
+    uploadRipple();
+    Hooks.run('frame',dt,sdt);
+    render();
+    if(gl.isContextLost()){ window.AquaBoot.contextLost(); return; }
+    if(frameN===1) window.AquaBoot.firstFrame();
+    if(typeof audioFrame==='function') audioFrame(dt);
 
-  if(now-lastStat>500){
-    lastStat=now; fpsShown=Math.round(1000/ema);
-    updateStats(Math.min(fpsShown,120),balls.length,pr,sigWaveHeight());
-    if(frameN>3) uiReady();
-  }
+    if(now-lastStat>500){
+      lastStat=now; fpsShown=Math.round(1000/ema);
+      updateStats(Math.min(fpsShown,120),balls.length,actualPR,sigWaveHeight());
+      if(frameN>3) uiReady();
+    }
+    /* Schedule only after a successful frame; a persistent exception must not
+       enqueue an infinite stream of errors. */
+    if(window.AquaBoot.canRender()) requestAnimationFrame(frame);
+  }catch(error){ window.AquaBoot.fail(error); }
 }
-/* a lost GPU context cannot be repaired in place – reload once it comes back */
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) havePrev=false; });
-canvas.addEventListener('webglcontextlost',e=>{ e.preventDefault(); showErr('The graphics context was lost. Reloading…'); });
-canvas.addEventListener('webglcontextrestored',()=>location.reload());
 
-updateEnv(0.016,0); updateWaves(sea);
-resize();
-requestAnimationFrame(t=>{ lastT=t; frame(t); });
-
-/* a couple of balls to start with */
-spawnBall(-2.2,3.6,1.0,0,0,0,0);
-spawnBall(0.6,5.2,-0.4,1,0,0,0);
-spawnBall(2.6,6.4,0.8,5,0,0,0);
+/* All scripts and saved settings are ready before we allocate the targets or
+   schedule the first frame. This also avoids repeated startup allocations. */
+window.AquaStart=function(){
+  if(rendererStarted) return;
+  rendererStarted=true;
+  updateEnv(0.016,0); updateWaves(sea);
+  resize();
+  if(window.AquaBoot.state==='lost') return;
+  spawnBall(-2.2,3.6,1.0,0,0,0,0);
+  spawnBall(0.6,5.2,-0.4,1,0,0,0);
+  spawnBall(2.6,6.4,0.8,5,0,0,0);
+  if(safeGraphics) setTimeout(()=>{ if(window.AquaBoot.canRender()) toast('Low-memory graphics mode is active for this visit'); },1400);
+  lastT=performance.now();
+  requestAnimationFrame(frame);
+};

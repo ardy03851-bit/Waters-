@@ -107,24 +107,16 @@
   <div class="isub">filling the ocean…</div>
 </div>
 
-<div id="fail">This showcase needs WebGL 2 (iPadOS 15+ / Safari 15+). Please update your device or browser.</div>
-<div id="err"></div>
+<div id="fail" role="alert" aria-live="assertive">
+  <div class="fail-card">
+    <h1 id="failTitle">Graphics could not start</h1>
+    <p id="failMessage">Please retry the graphics or use low-memory mode.</p>
+    <div class="fail-actions"><button id="retryGraphics" type="button">Retry</button><button id="safeGraphics" type="button">Retry in low-memory mode</button></div>
+    <details id="failDetails" hidden><summary>Graphics details</summary><pre id="err"></pre></details>
+  </div>
+</div>
 
-<!-- Plain scripts, loaded in order (no build step, works from any static host) -->
-<script src="js/core.js"></script>      <!-- WebGL context, math helpers -->
-<script src="js/engine.js"></script>    <!-- extension layer: hooks + public API -->
-<script src="js/shaders.js"></script>   <!-- GLSL: water, sky, balls, splash particles -->
-<script src="js/ocean.js"></script>       <!-- textures, geometry, waves, ripple sim -->
-<script src="js/environment.js"></script> <!-- season, time of day, weather, sky & light -->
-<script src="js/splash.js"></script>      <!-- ballistic spray, mist and rain-back -->
-<script src="js/surf.js"></script>        <!-- breaking sheets, crowns and coastal foam -->
-<script src="js/islands.js"></script>     <!-- archipelago, terrain textures, coastal surf -->
-<script src="js/island-details.js"></script> <!-- seeded rocks, grasses and seabirds -->
-<script src="js/weather.js"></script>     <!-- rain & snow -->
-<script src="js/physics.js"></script>     <!-- rigid-body ball physics -->
-<script src="js/input.js"></script>       <!-- camera, pointer & touch input -->
-<script src="js/audio.js"></script>       <!-- procedural sound -->
-<script src="js/render.js"></script>      <!-- render passes + main loop -->
-<script src="js/ui.js"></script>          <!-- glass UI, settings, persistence -->
+<!-- Ordered, fail-fast loading keeps the static site free of a build step. -->
+<script src="js/boot.js"></script>
 </body>
 </html>

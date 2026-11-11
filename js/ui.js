@@ -112,6 +112,7 @@ const CONTROLS=[
   {tab:'camera',t:'toggle',k:'follow',label:'Follow ball',sub:'Keep the newest ball in the centre'},
   {tab:'camera',t:'buttons',items:[['Reset view',()=>{resetCamera();toast('View reset');}]]},
 
+  ...(safeGraphics?[{tab:'system',t:'note',text:'Low-memory mode is active for this visit. Resolution and enhanced graphics are limited; your saved preferences are retained.'}]:[]),
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
   {tab:'system',t:'toggle',k:'hq',label:'Improved graphics mode',sub:'Full-resolution reflections, denser spray and rain, finer water detail'},
   {tab:'system',t:'range',k:'splash',label:'Splash detail',min:0.3,max:1.5,step:0.05,fmt:pct},
@@ -214,7 +215,11 @@ function apply(k){
     case 'orbit': autoOrbit=v; break;
     case 'follow': followBall=v; break;
     case 'quality': setQuality(v); break;
-    case 'hq': hqMode=v; setQuality(quality); if(curW>0) makeTargets(curW,curH); havePrev=false; break;
+    case 'hq':
+      hqMode=v&&!safeGraphics;
+      if(rendererStarted) resize(true);
+      if(v&&safeGraphics&&!settingsBooting) toast('Enhanced graphics are limited in low-memory mode');
+      havePrev=false; break;
     case 'splash': splashAmt=v; break;
     case 'motionBlur': motionBlurOn=v; break;
     case 'blur': blurStrength=v; break;

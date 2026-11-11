@@ -698,26 +698,55 @@ void main(){
   o=vec4(c,1.0);
 }`;
 
-function compile(type,src){
-  const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
-  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ const m=gl.getShaderInfoLog(s); showErr('Shader error: '+m); throw new Error(m); }
+function shaderFailure(message,retryable){
+  const error=new Error(message);
+  if(retryable) error.code='GRAPHICS_RETRYABLE';
+  return error;
+}
+function compile(type,src,label){
+  const stage=type===gl.VERTEX_SHADER?'vertex':'fragment';
+  const s=gl.createShader(type);
+  if(!s) throw shaderFailure('Could not create the '+label+' '+stage+' shader.',true);
+  gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+    const log=gl.getShaderInfoLog(s);
+    gl.deleteShader(s);
+    throw shaderFailure('Could not compile the '+label+' '+stage+' shader: '+(log||'the graphics driver supplied no diagnostic.'),!log);
+  }
   return s;
 }
-function program(vs,fs){
-  const p=gl.createProgram();
-  gl.attachShader(p,compile(gl.VERTEX_SHADER,vs)); gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));
-  gl.linkProgram(p);
-  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){ const m=gl.getProgramInfoLog(p); showErr('Link error: '+m); throw new Error(m); }
-  p.u={}; return p;
+function program(vs,fs,label='graphics'){
+  let vertex=null,fragment=null,p=null;
+  try{
+    vertex=compile(gl.VERTEX_SHADER,vs,label); fragment=compile(gl.FRAGMENT_SHADER,fs,label);
+    p=gl.createProgram();
+    if(!p) throw shaderFailure('Could not create the '+label+' graphics program.',true);
+    gl.attachShader(p,vertex); gl.attachShader(p,fragment); gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)){
+      const log=gl.getProgramInfoLog(p);
+      throw shaderFailure('Could not link the '+label+' graphics program: '+(log||'the graphics driver supplied no diagnostic.'),!log);
+    }
+    p.u={}; return p;
+  }catch(error){
+    if(p){ gl.deleteProgram(p); p=null; }
+    throw error;
+  }finally{
+    /* Once linked, detach and release the temporary shader objects so startup
+       does not retain dozens of shader allocations alongside the programs. */
+    if(p&&vertex) gl.detachShader(p,vertex);
+    if(p&&fragment) gl.detachShader(p,fragment);
+    if(vertex) gl.deleteShader(vertex);
+    if(fragment) gl.deleteShader(fragment);
+  }
 }
 function L(p,n){ let v=p.u[n]; if(v===undefined){ v=gl.getUniformLocation(p,n); p.u[n]=v; } return v; }
 
-const pWater=program(WATER_VS,WATER_FS);
-const pSky=program(SKY_VS,SKY_FS);
-const pBall=program(BALL_VS,BALL_FS);
-const pPart=program(PART_VS,PART_FS);
-const pPrecip=program(PRECIP_VS,PRECIP_FS);
-const pPost=program(POST_VS,POST_FS);
-const pMotion=program(MOTION_VS,MOTION_FS);
-const pMotionTile=program(POST_VS,MOTION_TILE_FS);
+const pWater=program(WATER_VS,WATER_FS,'water');
+const pSky=program(SKY_VS,SKY_FS,'sky');
+const pBall=program(BALL_VS,BALL_FS,'ball');
+const pPart=program(PART_VS,PART_FS,'splash');
+const pPrecip=program(PRECIP_VS,PRECIP_FS,'precipitation');
+const pPost=program(POST_VS,POST_FS,'post-processing');
+const pMotion=program(MOTION_VS,MOTION_FS,'motion');
+const pMotionTile=program(POST_VS,MOTION_TILE_FS,'motion tile');
 
