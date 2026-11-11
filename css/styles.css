@@ -460,3 +460,68 @@ body.paused #slowBadge,body.paused #hint{opacity:0!important}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important}
 }
+
+/* ---------- first-person exploration ---------- */
+.explore-btn:not(.on){border-color:rgba(129,221,244,.40);background:linear-gradient(150deg,rgba(76,167,200,.25),rgba(255,255,255,.05))}
+#exploreHUD{display:none;position:fixed;z-index:8;top:max(12px,var(--sat));left:50%;transform:translateX(-50%);
+  max-width:calc(100vw - 28px);padding:8px 10px 8px 15px;align-items:center;gap:8px;--r:20px}
+body.exploring #exploreHUD{display:flex}
+.explore-copy{min-width:0;margin-right:5px;line-height:1.15}
+.explore-copy strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.explore-copy small{display:block;font-size:10.5px;color:var(--ink-dim);white-space:nowrap;margin-top:3px}
+.explore-mobile{display:none!important}
+.explore-action{border:1px solid rgba(182,235,255,.35);background:rgba(123,210,239,.16);border-radius:12px;
+  padding:0 12px;min-height:38px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.explore-action:hover,.explore-action:focus-visible{background:rgba(123,210,239,.32)}
+body.exploring #dock,body.exploring #fab{opacity:0;pointer-events:none;transform:translateY(120%)}
+body.exploring #hint{opacity:0;pointer-events:none}
+body.exploring #gl{cursor:crosshair}
+#exploreTouch{display:none;position:fixed;z-index:7;left:max(16px,var(--sal));right:max(16px,var(--sar));
+  bottom:max(18px,var(--sab));justify-content:space-between;align-items:flex-end;pointer-events:none}
+#exploreTouch button{pointer-events:auto;touch-action:none;min-width:49px;min-height:49px;border:1px solid rgba(215,246,255,.35);
+  border-radius:15px;background:rgba(8,35,53,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 3px 12px rgba(0,0,0,.25);
+  font-size:16px;line-height:1;font-weight:700;cursor:pointer}
+#exploreTouch button.held,#exploreTouch button:active{background:rgba(111,220,242,.55)}
+.swim-pad{display:grid;grid-template:repeat(2,49px)/repeat(3,49px);gap:5px}
+.swim-forward{grid-area:1/2}.swim-left{grid-area:2/1}.swim-back{grid-area:2/2}.swim-right{grid-area:2/3}
+.swim-depth{display:flex;flex-direction:column;gap:6px}
+#exploreTouch .swim-depth button{font-size:11px;min-width:59px;min-height:48px}
+.swim-depth b{font-size:16px}
+body.cinema #exploreHUD,body.cinema #exploreTouch{display:none}
+@media (pointer:coarse),(any-pointer:coarse){
+  body.exploring #exploreTouch{display:flex}
+  .explore-desktop{display:none!important}.explore-mobile{display:block!important}
+}
+@media (max-width:900px){
+  #exploreHUD{top:max(116px,calc(var(--sat) + 104px))}
+  body.exploring #toasts{top:max(174px,calc(var(--sat) + 162px))}
+}
+@media (max-width:540px){
+  #exploreHUD{width:calc(100% - 24px);gap:5px;padding-left:11px}
+  .explore-copy{flex:1}.explore-copy small{font-size:10px;overflow:hidden;text-overflow:ellipsis}
+  .explore-action{padding:0 9px;min-height:40px}
+}
+@media (max-height:520px) and (orientation:landscape){
+  #exploreHUD{top:max(8px,var(--sat));max-width:58vw}
+  .explore-copy small{display:none!important}
+  #exploreTouch{bottom:max(8px,var(--sab))}
+  #exploreTouch button{min-width:42px;min-height:42px}
+  .swim-pad{grid-template:repeat(2,42px)/repeat(3,42px)}
+  body.exploring .brand p,body.exploring .st.wide{display:none}
+  body.exploring .brand{padding-right:16px}
+}
+@media (max-height:520px) and (orientation:landscape) and (max-width:640px){
+  body.exploring #top{visibility:hidden}
+}
+/* Keep the added Explore action on the existing dock row instead of growing
+   the dock over the scene. Smaller layouts may scroll the action row. */
+@media (min-width:761px){
+  #dock .acts .btn{padding-left:11px;padding-right:11px;font-size:13px;gap:6px}
+}
+@media (min-width:541px) and (max-width:900px){
+  #dock .acts{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  #dock .acts::-webkit-scrollbar{display:none}
+  #dock .acts .btn{flex:0 0 auto}
+}
+body.exploring #dock,body.exploring #fab{visibility:hidden}
+body.exploring #hint{display:none}

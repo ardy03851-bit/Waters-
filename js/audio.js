@@ -112,3 +112,11 @@ function audioThunder(){
   audioBurst(audio.brown,'lowpass',140,40,0.8,0.7,0.6,3.5,delay+0.8);
 }
 onLightning=audioThunder;
+
+/* Low, distance-attenuated tremor; effects are silent unless Sound is enabled. */
+function audioQuake(onLand,strength,x,z){
+  if(!audio.on||!audio.ctx) return;
+  const distance=Math.hypot(x-eye[0],z-eye[2]),k=clamp(strength,0,1.5)/(1+distance*0.018);
+  audioBurst(audio.brown,'lowpass',onLand?220:130,35,0.6,0.48*k,0.15,onLand?3.0:2.4,0);
+  if(onLand) audioBurst(audio.noise,'bandpass',900,280,0.5,0.09*k,0.08,1.4,0.15);
+}

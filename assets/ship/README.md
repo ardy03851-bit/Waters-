@@ -1,0 +1,11 @@
+# Dutch Ship Medium – asset provenance
+
+- **Original asset:** [Dutch Ship Medium](https://polyhaven.com/a/dutch_ship_medium), Poly Haven.
+- **Authors:** James Ray Cock (model, textures, cleanup), Nicolò Zubbini (original model), and Rico Cilliers (sails model and textures).
+- **License:** [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/); see also [Poly Haven's license](https://polyhaven.com/license). Credit is included as a courtesy.
+- **Source used for geometry and 2K maps:** the [CC0 packed GLB](https://github.com/nauvalrizz/senja-assets/tree/11e922183692cfbadf0cc91770c275bac325833e) of the same Poly Haven glTF asset. The source GLB has SHA-256 `3ad4b555851bedf84527840c5b1fecee22715458a57cf53a05649be78e33654d`.
+- **Source used for the sail opacity:** Poly Haven's original [`dutch_ship_medium_sails_alpha_1k.png`](https://dl.polyhaven.org/file/ph-assets/Models/png/1k/dutch_ship_medium/dutch_ship_medium_sails_alpha_1k.png), obtained from a [GitHub mirror](https://github.com/whoami22888/isles-of-mythos/blob/3d3b5497304f2a2dca60111f8c45e112769d7ded/client-godot/assets/external/polyhaven/dutch_ship_medium/textures/dutch_ship_medium_sails_alpha_1k.png). The source mask's SHA-256 is `b319c5b5815bb1538061d377fdd0d4b753023188edd1fd6a43ce67ccf51a84ab`; the mirror's [provenance manifest](https://github.com/whoami22888/isles-of-mythos/blob/3d3b5497304f2a2dca60111f8c45e112769d7ded/client-godot/assets/external-assets.json) records the upstream URL and license.
+
+The locally served `dutch-ship.bin` contains the source's three indexed triangle meshes, preserving positions, normals, UVs and indices. `mesh.json` describes their byte ranges for Aqua's small WebGL renderer; it is not a general-purpose glTF loader. The nine local maps were resized to 1024×1024 and recompressed. `sails-color.png` combines the source sail color with the separately supplied opacity mask so holes in the fabric remain transparent; the GLB's embedded JPEG did not carry that alpha. The original asset contains approximately 69,000 triangles. These conversions do not add a modeled cabin or other interior geometry.
+
+The resulting files are approximately 5.4 MB in total and are loaded only when the ship is enabled. They are served from this site, with no runtime CDN dependency.

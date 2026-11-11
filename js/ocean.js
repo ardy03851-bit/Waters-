@@ -131,15 +131,21 @@ function waveSample(x,z,t,full,out){
       const ah=-w.qk*w.om*w.om*c; ax+=w.dx*ah; az+=w.dz*ah;
     }
   }
+  if(typeof seaQuakeHeight==='function'){
+    h+=seaQuakeHeight(x,z,t);
+    if(full) vy+=seaQuakeVelocity(x,z,t);
+  }
   out.h=h;out.vx=vx;out.vy=vy;out.vz=vz;out.ax=ax;out.az=az;
 }
 /* significant wave height of the current sea (4·σ of the surface elevation) */
 function sigWaveHeight(){ let v=0; for(let i=0;i<8;i++) v+=wv[i].A*wv[i].A*0.5; return 4*Math.sqrt(v); }
 function surfH(x,z,t){
-  let h=0; for(let i=0;i<8;i++){const w=wv[i];h+=w.A*Math.sin(w.k*(w.dx*x+w.dz*z)-w.om*t+w.ph);} return h;
+  let h=0; for(let i=0;i<8;i++){const w=wv[i];h+=w.A*Math.sin(w.k*(w.dx*x+w.dz*z)-w.om*t+w.ph);}
+  return h+(typeof seaQuakeHeight==='function'?seaQuakeHeight(x,z,t):0);
 }
 function approxH(x,z,t){
-  let h=0; for(let i=0;i<3;i++){const w=wv[i];h+=w.A*Math.sin(w.k*(w.dx*x+w.dz*z)-w.om*t+w.ph);} return h;
+  let h=0; for(let i=0;i<3;i++){const w=wv[i];h+=w.A*Math.sin(w.k*(w.dx*x+w.dz*z)-w.om*t+w.ph);}
+  return h+(typeof seaQuakeHeight==='function'?seaQuakeHeight(x,z,t):0);
 }
 
 /* ============================================================

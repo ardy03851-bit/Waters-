@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "byteLength": 2480380,
+  "meshes": [
+    {
+      "name": "x-Boats-Dutch-medium-rigging-joined",
+      "vertexOffset": 0,
+      "vertexCount": 35903,
+      "stride": 32,
+      "indexOffset": 1148896,
+      "indexCount": 101148
+    },
+    {
+      "name": "x-Boats-Dutch-medium-baseB-joined",
+      "vertexOffset": 1563868,
+      "vertexCount": 24621,
+      "stride": 32,
+      "indexOffset": 1351192,
+      "indexCount": 83694
+    },
+    {
+      "name": "Plane.072",
+      "vertexOffset": 2351740,
+      "vertexCount": 4020,
+      "stride": 32,
+      "indexOffset": 1518580,
+      "indexCount": 22644
+    }
+  ]
+}

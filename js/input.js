@@ -7,13 +7,20 @@ let eye=[0,3,13], camF=[0,0,-1], camR=[1,0,0], camU=[0,1,0], VP=null, tanH=0.466
 /* camera options (set from the UI) */
 let fovDeg=50, autoOrbit=false, followBall=false, launchMode='drop', throwSpeed=14;
 const HOME_TARGET=[0,0.3,0], ISLAND_TARGET=[0,1,-16];
+/* Keep the existing archipelago orbit available when the ship is also on. */
+let cameraFocus='islands';
+function cameraFramesShip(){return typeof ship!=='undefined'&&ship.enabled&&(cameraFocus==='ship'||!islands.active);}
 function computeCamera(){
+  if(typeof explore!=='undefined'&&explore.active){computeExploreCamera();return;}
   const cp=Math.cos(cam.pitch);
   eye=[cam.target[0]+cam.dist*Math.sin(cam.yaw)*cp, cam.target[1]+cam.dist*Math.sin(cam.pitch), cam.target[2]+cam.dist*Math.cos(cam.yaw)*cp];
   waveSample(eye[0],eye[2],simT,false,S1);
   const minY=Math.max(S1.h+0.5,islands.active?islandGround(eye[0],eye[2])+1.0:-1000);
   if(eye[1]<minY) eye[1]=minY;
-  let fx=cam.target[0]-eye[0],fy=cam.target[1]-eye[1],fz=cam.target[2]-eye[2]; const fl=Math.hypot(fx,fy,fz); fx/=fl;fy/=fl;fz/=fl;
+  const shake=typeof quakeCameraOffset==='function'?quakeCameraOffset(eye[0],eye[2]):[0,0,0];
+  eye=[eye[0]+shake[0],eye[1]+shake[1],eye[2]+shake[2]];
+  const aim=[cam.target[0]+shake[0],cam.target[1]+shake[1],cam.target[2]+shake[2]];
+  let fx=aim[0]-eye[0],fy=aim[1]-eye[1],fz=aim[2]-eye[2]; const fl=Math.hypot(fx,fy,fz); fx/=fl;fy/=fl;fz/=fl;
   camF=[fx,fy,fz];
   let rx=fy*0-fz*1, ry=fz*0-fx*0, rz=fx*1-fy*0; // cross(f, up=(0,1,0))
   rx=-fz; ry=0; rz=fx; const rl=Math.hypot(rx,rz); rx/=rl;rz/=rl; camR=[rx,0,rz];
@@ -21,7 +28,7 @@ function computeCamera(){
   aspect=canvas.width/canvas.height;
   tanH=Math.tan(fovDeg*Math.PI/360)*Math.max(1,1.15/aspect);
   const proj=M4.persp(2*Math.atan(tanH),aspect,0.1,3000);
-  VP=M4.mul(proj,M4.look(eye,cam.target,[0,1,0]));
+  VP=M4.mul(proj,M4.look(eye,aim,[0,1,0]));
 }
 function rayFrom(px,py){
   const nx=(px/innerWidth)*2-1, ny=1-(py/innerHeight)*2;
@@ -74,19 +81,22 @@ function spawnAtPointer(px,py){
 }
 /* per-frame camera behaviour: easing, auto-orbit, follow the newest ball */
 function updateCamera(dt){
+  if(typeof explore!=='undefined'&&explore.active){updateExplore(dt);return;}
   if(autoOrbit&&ptrs.size===0) cam.tYaw+=dt*0.07;
   cam.yaw+=(cam.tYaw-cam.yaw)*Math.min(1,dt*10);
   cam.pitch+=(cam.tPitch-cam.pitch)*Math.min(1,dt*10);
   cam.dist+=(cam.tDist-cam.dist)*Math.min(1,dt*8);
-  const home=islands.active?ISLAND_TARGET:HOME_TARGET;
+  const home=cameraFramesShip()?[ship.x,4.5,ship.z]:(islands.active?ISLAND_TARGET:HOME_TARGET);
   let tx=home[0],ty=home[1],tz=home[2];
   if(followBall&&balls.length){ const b=balls[balls.length-1]; tx=b.x; ty=clamp(b.y,-1.5,islands.active?20:6)*0.6+0.2; tz=b.z; }
   const k=Math.min(1,dt*3.5);
   cam.target[0]+=(tx-cam.target[0])*k; cam.target[1]+=(ty-cam.target[1])*k; cam.target[2]+=(tz-cam.target[2])*k;
 }
-function resetCamera(){
+function resetCamera(subject){
+  if(subject) cameraFocus=subject;
   cam.tYaw=Math.round(cam.yaw/(2*Math.PI))*2*Math.PI;
-  cam.tPitch=islands.active?0.43:0.24; cam.tDist=islands.active?100:13;
+  const withShip=cameraFramesShip();
+  cam.tPitch=withShip?0.30:(islands.active?0.43:0.24); cam.tDist=withShip?48:(islands.active?100:13);
 }
 const ptrs=new Map(); let pinch0=0, pinchDist0=13, downT=0, tapStart=null, lastHintHide=false;
 function hideHint(){ if(lastHintHide)return; lastHintHide=true; $('hint').classList.add('gone'); }
@@ -99,6 +109,7 @@ canvas.addEventListener('pointerdown',e=>{
   e.preventDefault(); canvas.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,t:performance.now(),moved:false});
   hideHint(); canvas.style.cursor='grabbing';
+  if(typeof explore!=='undefined'&&explore.active) return;
   if(ptrs.size===1){
     const hit=pickBall(e.clientX,e.clientY);
     if(hit){ grab={ball:hit.ball,pid:e.pointerId,depth:hit.t}; setGrabTarget(e.clientX,e.clientY); }
@@ -111,16 +122,23 @@ canvas.addEventListener('pointermove',e=>{
   const p=ptrs.get(e.pointerId); if(!p)return;
   const dx=e.clientX-p.x,dy=e.clientY-p.y; p.x=e.clientX;p.y=e.clientY;
   if(Math.hypot(p.x-p.sx,p.y-p.sy)>7) p.moved=true;
+  if(typeof explore!=='undefined'&&explore.active){
+    if(ptrs.size===1){explore.yaw+=dx*0.0045*explore.sensitivity;explore.pitch=clamp(explore.pitch-dy*0.0045*explore.sensitivity,-1.4,1.4);}
+    return;
+  }
   if(grab&&grab.pid===e.pointerId){ setGrabTarget(e.clientX,e.clientY); return; }
   if(ptrs.size===1&&p.moved){
     cam.tYaw-=dx*0.0055; cam.tPitch=clamp(cam.tPitch+dy*0.0045,0.02,1.45);
   } else if(ptrs.size===2){
     const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y);
-    if(pinch0>10) cam.tDist=clamp(pinchDist0*pinch0/Math.max(d,10),3.5,islands.active?160:45);
+    if(pinch0>10) cam.tDist=clamp(pinchDist0*pinch0/Math.max(d,10),3.5,islands.active?160:(ship.enabled?70:45));
   }
 });
 function endPtr(e){
   const p=ptrs.get(e.pointerId); if(!p)return;
+  if(typeof explore!=='undefined'&&explore.active){
+    ptrs.delete(e.pointerId);if(ptrs.size===0) canvas.style.cursor='grab';return;
+  }
   const wasGrab=grab&&grab.pid===e.pointerId;
   if(wasGrab) releaseGrab();
   else if(ptrs.size===1&&!p.moved&&performance.now()-p.t<400&&e.type==='pointerup') spawnAtPointer(p.x,p.y);
@@ -130,7 +148,7 @@ function endPtr(e){
 }
 canvas.addEventListener('pointerup',endPtr);
 canvas.addEventListener('pointercancel',endPtr);
-canvas.addEventListener('wheel',e=>{e.preventDefault();cam.tDist=clamp(cam.tDist*Math.exp(e.deltaY*0.0012),3.5,islands.active?160:45);},{passive:false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();if(typeof explore!=='undefined'&&explore.active)return;cam.tDist=clamp(cam.tDist*Math.exp(e.deltaY*0.0012),3.5,islands.active?160:(ship.enabled?70:45));},{passive:false});
 ['gesturestart','gesturechange','gestureend'].forEach(n=>document.addEventListener(n,e=>e.preventDefault()));
 document.addEventListener('touchmove',e=>{ if(e.target===canvas) e.preventDefault(); },{passive:false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());

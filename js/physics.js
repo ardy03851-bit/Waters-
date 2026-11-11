@@ -142,6 +142,7 @@ function stepBall(b,dt){
 
   b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;
   if(islands.active) collideIsland(b,dt);
+  if(typeof collideShip==='function') collideShip(b,dt);
   /* orientation */
   const q=b.q,hx=0.5*dt;
   const dqx=b.wx*q[3]+b.wy*q[2]-b.wz*q[1], dqy=-b.wx*q[2]+b.wy*q[3]+b.wz*q[0],

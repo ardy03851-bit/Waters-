@@ -105,11 +105,11 @@ function render(){
   /* reflection pass (mirrored islands and balls) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,refl.fb); gl.viewport(0,0,rW,rH);
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  drawIslands(1,1); drawBalls(1,1);
+  drawIslands(1,1); drawShip(1,1); drawBalls(1,1);
   /* scene pass (colour+depth for underwater refraction) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,scene.fb); gl.viewport(0,0,W,Hh);
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  drawIslands(1,0); drawBalls(1,0);
+  drawIslands(1,0); drawShip(1,0); drawBalls(1,0);
 
   /* main pass (into the post target – resolved to the canvas afterwards) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,post.fb); gl.viewport(0,0,W,Hh);
@@ -117,18 +117,19 @@ function render(){
   gl.disable(gl.DEPTH_TEST);
   gl.useProgram(pSky); setSky(pSky);
   gl.uniform3fv(L(pSky,'uCamF'),camF); gl.uniform3fv(L(pSky,'uCamR'),camR); gl.uniform3fv(L(pSky,'uCamU'),camU);
-  gl.uniform2f(L(pSky,'uTanAsp'),tanH,aspect);
+  gl.uniform2f(L(pSky,'uTanAsp'),tanH,aspect);gl.uniform1f(L(pSky,'uUnderwater'),cameraSubmerge());
   gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3);
   gl.enable(gl.DEPTH_TEST);
 
   /* Opaque terrain writes depth first, so waves naturally meet the coast. */
-  drawIslands(0,0);
-  gl.useProgram(pWater); setSky(pWater);
+  drawIslands(0,0); drawShip(0,0);
+  gl.useProgram(pWater); setSky(pWater); setQuakeUniform(pWater);
   gl.uniformMatrix4fv(L(pWater,'uVP'),false,VP);
   gl.uniform3fv(L(pWater,'uCam'),eye); gl.uniform3fv(L(pWater,'uCamR'),camR); gl.uniform3fv(L(pWater,'uCamF'),camF);
   gl.uniform4fv(L(pWater,'uW'),uWArr); gl.uniform1fv(L(pWater,'uQ'),uQArr); gl.uniform1fv(L(pWater,'uPhase'),uPhaseArr);
   gl.uniform1f(L(pWater,'uRipR'),RR); gl.uniform1f(L(pWater,'uRipN'),RN); gl.uniform1f(L(pWater,'uA0'),waveA0);
   gl.uniform1f(L(pWater,'uIslands'),islands.active?1:0); gl.uniform1f(L(pWater,'uSeaState'),sea);
+  gl.uniform1f(L(pWater,'uUnderwater'),cameraSubmerge()>0.5?1:0);
   gl.uniform2f(L(pWater,'uWind'),Math.sin(windAng),Math.cos(windAng));
   gl.uniform2f(L(pWater,'uRes'),W,Hh); gl.uniform2f(L(pWater,'uNF'),0.1,3000);
   gl.uniform1i(L(pWater,'uRip'),1); gl.uniform1i(L(pWater,'uScene'),2); gl.uniform1i(L(pWater,'uSceneD'),3); gl.uniform1i(L(pWater,'uRefl'),4); gl.uniform1i(L(pWater,'uIslandMap'),5);
@@ -145,6 +146,8 @@ function render(){
   drawSurfFoam();
   drawWindSpray();
 
+  /* Island dust and fissures use their own bounded, non-spherical effects. */
+  drawQuakeEffects();
   /* balls above the surface */
   drawBalls(0,0);
 
@@ -163,7 +166,7 @@ function render(){
     gl.bindVertexArray(partVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,pCount); gl.bindVertexArray(null);
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
-  drawPrecip(Hh);
+  if(cameraSubmerge()<0.5) drawPrecip(Hh);
   postPass();
   Hooks.run('render');
 }
@@ -191,7 +194,9 @@ function drawMotionVectors(){
     gl.uniformMatrix3fv(L(pMotion,'uPrevRot'),false,prev?prev.rot:b.rot);
     gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
   }
-  gl.bindVertexArray(null); gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
+  gl.bindVertexArray(null);
+  drawShipMotion();
+  gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb); gl.viewport(0,0,motion.tileW,motion.tileH);
   gl.disable(gl.DEPTH_TEST); gl.useProgram(pMotionTile);
@@ -207,6 +212,7 @@ function rememberMotion(){
     b.motionPrev.pos[0]=b.x; b.motionPrev.pos[1]=b.y; b.motionPrev.pos[2]=b.z;
     b.motionPrev.rot.set(b.rot);
   }
+  rememberShipMotion();
   havePrev=true;
 }
 
@@ -214,6 +220,7 @@ function rememberMotion(){
    still (particularly useful while paused). Water and droplets keep their
    own independently animated shading and exposure. */
 function hasFrameMotion(){
+  if(shipHasMotion()) return true;
   for(let i=0;i<16;i++) if(Math.abs(VP[i]-prevVPm[i])>1e-6) return true;
   for(const b of balls){
     const p=b.motionPrev;
@@ -228,7 +235,7 @@ function postPass(){
   const W=canvas.width,Hh=canvas.height;
   const mb=motionBlurOn&&havePrev&&frameInterval<=0.2&&hasFrameMotion()?
     clamp(blurStrength*(1/90)/Math.max(frameInterval,1/240),0,2):0;
-  const hasVelocity=mb>0.001&&balls.length>0;
+  const hasVelocity=mb>0.001&&(balls.length>0||(ship.enabled&&ship.status==='ready'));
   if(hasVelocity) drawMotionVectors();
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.viewport(0,0,W,Hh);
@@ -241,6 +248,7 @@ function postPass(){
   gl.uniformMatrix4fv(L(pPost,'uPrevVP'),false,prevVPm);
   gl.uniform1f(L(pPost,'uMB'),mb); gl.uniform1f(L(pPost,'uHasVelocity'),hasVelocity?1:0);
   gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0); gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
+  gl.uniform1f(L(pPost,'uSubmerge'),cameraSubmerge());gl.uniform1f(L(pPost,'uWaterTime'),simT);
   gl.uniform1i(L(pPost,'uScene'),0); gl.uniform1i(L(pPost,'uDepth'),1);
   gl.uniform1i(L(pPost,'uVelocity'),2); gl.uniform1i(L(pPost,'uMotionTile'),3);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);

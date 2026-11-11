@@ -20,13 +20,14 @@ function toast(msg){
    ============================================================ */
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
-  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, islandSeed:0,
+  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, islandSeed:0,
   islandStyle:'wild', islandBiome:'mixed', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1, islandFeatures:1,
   islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandFlowers:1, islandLandmarks:1, islandCascades:1,
   islandBirds:true, islandWind:1, islandSurf:1,
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
-  fov:50, orbit:false, follow:false,
+  quakeStrength:1, quakeMotion:reduceMotion?0:1, quakeAuto:false, quakeInterval:90,
+  fov:50, orbit:false, follow:false, swimSpeed:1, lookSensitivity:1,
   quality:'auto', hq:false, splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true, stats:true, sound:false, volume:0.7
 };
 /* weather = a consistent set of physical quantities */
@@ -49,7 +50,9 @@ const SCENES=[
   {name:'Thunderstorm',  grad:'linear-gradient(160deg,#20262f,#4d5866 55%,#11202b)', set:{season:1,weather:'storm',hour:17,dayCycle:0}},
   {name:'Winter snow',   grad:'linear-gradient(160deg,#aebccb,#eef3f8 55%,#5f7386)', set:{season:3,weather:'snow',hour:11,dayCycle:0}},
   {name:'Starry night',  grad:'linear-gradient(160deg,#050a1e,#16224d 55%,#04101c)', set:{season:1,weather:'clear',hour:0.5,dayCycle:0}},
-  {name:'Rainbow shower',grad:'linear-gradient(160deg,#5b7fb5,#c9d6e4 55%,#e0a86b)', set:{season:1,weather:'partly',hour:5.2,dayCycle:0,cloud:0.34,precip:0.55,fog:0.08}}
+  {name:'Rainbow shower',grad:'linear-gradient(160deg,#5b7fb5,#c9d6e4 55%,#e0a86b)', set:{season:1,weather:'partly',hour:5.2,dayCycle:0,cloud:0.34,precip:0.55,fog:0.08}},
+  {name:'Blue-water voyage',grad:'linear-gradient(160deg,#64b9da,#b5e4e4 50%,#134b75)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,ship:true}},
+  {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true}}
 ];
 const pct=v=>Math.round(v*100)+'%';
 function fogLabel(v){ const m=20000*Math.pow(40/20000,clamp(v,0,1)); return m>=1000?(m/1000).toFixed(m>=10000?0:1)+' km':Math.round(m/5)*5+' m'; }
@@ -67,7 +70,9 @@ const CONTROLS=[
   {tab:'scene',t:'scenes'},
   {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
   {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
-  {tab:'scene',t:'note',text:'Explore and customise your coast in the Islands tab.'},
+  {tab:'scene',t:'toggle',k:'ship',label:'Floating sailing ship',sub:'A detailed CC0 ship, moored in open water'},
+  {tab:'scene',t:'buttons',items:[['Swim & explore',()=>enterExplore()],['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
+  {tab:'scene',t:'note',text:'Board the open decks from alongside. The model has no explorable enclosed cabins. Quake controls are in Physics; coast controls are in Islands.'},
   {tab:'scene',t:'seg',k:'launch',label:'Tapping the sea',opts:[['drop','Drops a ball'],['throw','Throws a ball']]},
   {tab:'scene',t:'range',k:'throwSpeed',label:'Throw speed',min:4,max:32,step:1,fmt:v=>v+' m/s'},
   {tab:'scene',t:'range',k:'size',label:'Ball size',min:0.5,max:2.2,step:0.01,fmt:v=>v.toFixed(1)+'×',dock:true},
@@ -112,11 +117,19 @@ const CONTROLS=[
   {tab:'physics',t:'range',k:'bounce',label:'Bounciness',min:0.3,max:1.3,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'physics',t:'seg',k:'water',label:'Water',opts:[[0.975,'Fresh'],[1,'Sea'],[1.21,'Dead Sea']]},
   {tab:'physics',t:'note',text:'Gravity changes how balls and spray fall. Denser water makes everything float higher.'},
+  {tab:'physics',t:'buttons',items:[['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
+  {tab:'physics',t:'range',k:'quakeStrength',label:'Quake strength',min:0.3,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'physics',t:'range',k:'quakeMotion',label:'Quake camera movement',min:0,max:1,step:0.05,fmt:pct},
+  {tab:'physics',t:'toggle',k:'quakeAuto',label:'Occasional quakes',sub:'Seaquakes and, when islands are present, island quakes'},
+  {tab:'physics',t:'seg',k:'quakeInterval',label:'Average interval',opts:[[40,'40 sec'],[90,'90 sec'],[180,'3 min']]},
+  {tab:'physics',t:'note',text:'Quakes are temporary effects: they do not permanently deform terrain or destroy the ship.'},
 
   {tab:'camera',t:'range',k:'fov',label:'Field of view',min:30,max:95,step:1,fmt:v=>v+'°'},
   {tab:'camera',t:'toggle',k:'orbit',label:'Auto-orbit',sub:'Slowly circle the scene'},
   {tab:'camera',t:'toggle',k:'follow',label:'Follow ball',sub:'Keep the newest ball in the centre'},
-  {tab:'camera',t:'buttons',items:[['Reset view',()=>{resetCamera();toast('View reset');}]]},
+  {tab:'camera',t:'range',k:'swimSpeed',label:'Exploration speed',min:0.6,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'camera',t:'range',k:'lookSensitivity',label:'Exploration look sensitivity',min:0.4,max:1.8,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'camera',t:'buttons',items:[['Reset view',()=>{resetCamera();toast('View reset');}],['Frame ship',()=>focusScene('ship')],['Frame islands',()=>focusScene('islands')]]},
 
   ...(safeGraphics?[{tab:'system',t:'note',text:'Low-memory mode is active for this visit. Resolution and enhanced graphics are limited; your saved preferences are retained.'}]:[]),
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
@@ -129,7 +142,7 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
   {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
-  {tab:'system',t:'note',text:'Shortcuts: Space drop · I islands · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema mode · O auto-orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
+  {tab:'system',t:'note',text:'Shortcuts: Space drop · I islands · U explore · Q seaquake · J island quake · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema · O orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
 const TABS=[['scene','Scene'],['islands','Islands'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
@@ -202,13 +215,14 @@ function apply(k){
     case 'maxBalls': MAXBALLS=v; while(balls.length>MAXBALLS){ const o=balls.shift(); if(grab&&grab.ball===o) grab=null; } break;
     case 'launch': launchMode=v; break;
     case 'throwSpeed': throwSpeed=v; break;
+    case 'ship': setShipEnabled(v); resetCamera(v?'ship':'islands'); break;
     case 'islands':
       cancelIslandRebuild();
       if(v) generateIslands(S.islandSeed,currentIslandOptions()); else {
         if(islands.active) for(const b of balls) if(Math.hypot(b.x,b.z)>28) b.islandRecovery=true;
         removeIslands(); cliffEvents.length=0;
       }
-      resetCamera(); break;
+      resetCamera(v?'islands':'ship'); break;
     case 'islandBiome': case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': case 'islandFeatures': queueIslandRebuild(1); break;
     case 'islandTrees': case 'islandTreeScale': queueIslandRebuild(2); break;
     case 'islandGrass': case 'islandRocks': queueIslandRebuild(4); break;
@@ -225,6 +239,12 @@ function apply(k){
     case 'speed': applySpeed(); break;
     case 'bounce': bounceMul=v; break;
     case 'water': waterRho=v; break;
+    case 'quakeStrength': quake.strength=v; break;
+    case 'quakeMotion': quake.motion=v; break;
+    case 'quakeAuto': quake.automatic=v; quake.next=quake.interval; break;
+    case 'quakeInterval': quake.interval=v; quake.next=v; break;
+    case 'swimSpeed': explore.speed=v; break;
+    case 'lookSensitivity': explore.sensitivity=v; break;
     case 'fov': fovDeg=v; break;
     case 'orbit': autoOrbit=v; break;
     case 'follow': followBall=v; break;
@@ -262,6 +282,7 @@ function userSet(k,v){
     if(S.follow) setVal('follow',false);
     setVal('islandSeed',nextIslandSeed());
   }
+  if(k==='ship'&&v&&!S.ship&&S.follow) setVal('follow',false);
   if(k==='season'&&S.weather==='snow'&&v!==3){ setVal('season',v); setWeather('rain',true); toast('Too warm for snow – it turned to rain'); return; }
   setVal(k,v);
   if(WEATHER_KEYS.indexOf(k)>=0&&S.weather!=='custom'){ S.weather='custom'; apply('weather'); refresh('weather'); saveSoon(); }
@@ -269,6 +290,7 @@ function userSet(k,v){
 }
 function applyScene(sc){
   const o=sc.set, st=sunTimes(o.season);
+  if(o.ship!==undefined){ setVal('ship',o.ship); if(o.ship){if(S.follow)setVal('follow',false);resetCamera('ship');} }
   setVal('season',o.season); setWeather(o.weather,true);
   /* scenes may override individual weather ingredients (e.g. the rainbow
      shower needs broken cloud + rain, which no preset provides) */
@@ -278,6 +300,13 @@ function applyScene(sc){
   setVal('hour',Math.round((o.hour==='sunset'?st.set-0.35:o.hour==='sunrise'?st.rise+0.3:o.hour)*20)/20);
   setVal('dayCycle',o.dayCycle);
   toast(sc.name);
+}
+function focusScene(subject){
+  if(subject==='ship'&&!ship.enabled){toast('Enable the ship first');return;}
+  if(subject==='islands'&&!islands.active){toast('Create islands first');return;}
+  if(explore.active) exitExplore();
+  if(S.follow) setVal('follow',false);
+  resetCamera(subject);toast(subject==='ship'?'Ship view':'Island view');
 }
 function resetAll(){
   for(const k in DEFAULTS){ if(k==='weather') continue; setVal(k,DEFAULTS[k]); }
@@ -374,6 +403,7 @@ function setPanel(open,tab){
   $('bSet').setAttribute('aria-expanded',open?'true':'false');
   $('cond').setAttribute('aria-expanded',open&&(!tab||tab==='sky')&&curTab==='sky'?'true':'false');
   if(open){ if($('dock').classList.contains('hidden')&&innerWidth>=900) setDock(true); showTab(tab||curTab); setTimeout(moveTabInd,80); hideHint(); }
+  else if(explore.active) canvas.focus({preventScroll:true});
   setTimeout(moveChipInd,700);
 }
 $('bSet').onclick=()=>setPanel(!$('panel').classList.contains('open'));
@@ -416,7 +446,7 @@ function toggleIslands(){
 function newIslands(){
   hideHint();
   if(!S.islands) userSet('islands',true);
-  else { cancelIslandRebuild(); setVal('islandSeed',nextIslandSeed()); generateIslands(S.islandSeed,currentIslandOptions()); cliffEvents.length=0; resetCamera(); }
+  else { cancelIslandRebuild(); setVal('islandSeed',nextIslandSeed()); generateIslands(S.islandSeed,currentIslandOptions()); cliffEvents.length=0; resetCamera('islands'); }
   toast('A new archipelago');
 }
 function islandStorm(){
@@ -460,6 +490,7 @@ function toggleFullscreen(){
 /* ---- cinema mode: the UI fades away and the scene takes the whole screen ---- */
 let cinema=false, cineHintT=0;
 function setCinema(on){
+  if(on&&explore.active) exitExplore();
   cinema=on;
   document.body.classList.toggle('cinema',on);
   setPanel(false); hideHint();
@@ -515,6 +546,7 @@ function setDock(show){
 }
 $('bDrop').onclick=dropBall;
 $('bIsland').onclick=toggleIslands;
+$('bExplore').onclick=toggleExplore;
 $('bRain').onclick=ballRain;
 $('bClear').onclick=clearAll;
 $('bSlow').onclick=toggleSlow;
@@ -524,10 +556,18 @@ setTimeout(hideHint,14000);
 
 addEventListener('keydown',e=>{
   if(e.repeat||e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.target&&e.target.closest&&e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
   const k=e.key.toLowerCase();
+  if(explore.active){
+    if(k==='escape'){if($('panel').classList.contains('open')) setPanel(false);else exitExplore();return;}
+    if(EXPLORE_KEYS.has(k)) return;
+  }
   if(k===' '){ if(e.target&&e.target.closest&&e.target.closest('button,input')) return; e.preventDefault(); dropBall(); }
   else if(k==='escape') setPanel(false);
   else if(k==='i') toggleIslands();
+  else if(k==='u') toggleExplore();
+  else if(k==='q') triggerSeaQuake();
+  else if(k==='j') triggerIslandQuake();
   else if(k==='r') ballRain();
   else if(k==='s') toggleSlow();
   else if(k==='c') clearAll();
