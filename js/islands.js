@@ -7,7 +7,25 @@
    same sampled surface drives the mesh, ball collision and shoreline map.
    ============================================================ */
 const ISLAND_MAP_SIZE=512, ISLAND_MAP_HALF=80, ISLAND_MAP_DEPTH=12;
-const islands={active:false,seed:0,land:[],coast:[],trees:null,treeCount:0,nextCrash:0};
+const ISLAND_STYLES={
+  wild:      {cliff:1,    peak:1,    beach:1},
+  coves:     {cliff:0.76, peak:0.76, beach:1.45},
+  highlands: {cliff:1.12, peak:1.38, beach:0.76}
+};
+const ISLAND_DEFAULTS={style:'wild',count:5,relief:1,coast:1,beach:1,trees:1,treeScale:1,grass:1,rocks:1,birds:true,wind:1,surf:1};
+/* Keep the public generator safe even when invoked outside the settings UI. */
+function islandConfig(input){
+  const o=Object.assign({},ISLAND_DEFAULTS,input||{}), number=(v,lo,hi,d)=>Number.isFinite(v)?clamp(v,lo,hi):d;
+  return {
+    style:Object.prototype.hasOwnProperty.call(ISLAND_STYLES,o.style)?o.style:'wild',
+    count:Math.round(number(o.count,3,5,5)),relief:number(o.relief,0.6,1.45,1),
+    coast:number(o.coast,0.5,1.2,1),beach:number(o.beach,0.5,1.5,1),
+    trees:number(o.trees,0,1.7,1),treeScale:number(o.treeScale,0.7,1.4,1),
+    grass:number(o.grass,0,1.5,1),rocks:number(o.rocks,0,1.5,1),
+    birds:typeof o.birds==='boolean'?o.birds:true,wind:number(o.wind,0,1.5,1),surf:number(o.surf,0,1.5,1)
+  };
+}
+const islands={active:false,seed:0,options:islandConfig(),land:[],coast:[],trees:null,treeCount:0,details:null,nextCrash:0};
 
 function islandRandom(seed){
   let a=seed>>>0;
@@ -21,24 +39,25 @@ function islandNoise(x,z,seed){
 function islandProfile(I,x,z){
   const dx=x-I.x,dz=z-I.z, lx=I.cs*dx+I.sn*dz, lz=-I.sn*dx+I.cs*dz;
   const u=lx/I.rx,v=lz/I.rz,a=Math.atan2(v,u);
-  const edge=1+0.13*Math.sin(3*a+I.phase)+0.075*Math.sin(5*a-I.phase*1.7)+0.035*Math.sin(9*a+I.phase*2.2);
+  const edge=1+I.coast*(0.13*Math.sin(3*a+I.phase)+0.075*Math.sin(5*a-I.phase*1.7)+0.035*Math.sin(9*a+I.phase*2.2));
   const broad=islandNoise(x*0.105+I.phase*5,z*0.105,I.seed);
   const fine=islandNoise(x*0.39,z*0.39+I.phase*3,I.seed+91);
   const r=Math.hypot(u,v)/edge+(broad-0.5)*0.10;
   const beach=Math.pow(Math.max(0,Math.cos(a-I.beach)),8)*0.95+
               Math.pow(Math.max(0,Math.cos(a-I.beach-2.5)),14)*0.65;
-  const b=clamp(beach,0,1);
+  const b=clamp(beach*I.beachWidth,0,1);
   /* Fade the outer shelf deep into the sea, rather than ending at a visible
      flat underwater edge. */
   const shelf=-22+22.75*sstep(1.36,0.985,r);
   /* Vary the width and height of the coastal escarpment. Beaches push it
      inland; gullies and headlands break the silhouette into natural ridges. */
-  const cliff=sstep(1.01-0.12*b,0.76-0.14*b,r);
+  const cliff=sstep(1.01-0.10*b,0.76-0.19*b,r);
   const inland=sstep(1.0,0.62,r);
   const d1=Math.hypot((u-I.peakX)*0.9,(v-I.peakZ)*1.1);
   const d2=Math.hypot(u+0.30+I.peakX*0.3,v-0.25+I.peakZ*0.3);
   const ridge1=Math.exp(-I.peakFalloff*d1*d1), ridge2=Math.exp(-4.5*d2*d2);
-  const rock=I.cliff*(0.72+0.50*broad+0.10*Math.sin(a*4+I.phase))*cliff;
+  const headland=0.82+0.22*Math.sin(a*2.0+I.phase)+0.10*Math.sin(a*5.0-I.phase*0.7);
+  const rock=I.cliff*(0.72+0.50*broad)*headland*(1-0.34*b)*cliff;
   const hills=I.peak*(ridge1+0.5*ridge2)*inland+inland*(broad-0.38)*3.2+(fine-0.5)*1.5*cliff;
   /* Water-cut radial gullies, broken ledges and uneven ridges interrupt the
      escarpment without changing its conservative outer bound. */
@@ -185,7 +204,7 @@ const ISLAND_FS=HDR+COMMON+`
 in vec3 vWorld; in vec3 vN; out vec4 o;
 uniform sampler2D uRock,uGrass,uSand,uTalus;
 uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover;
-uniform vec4 uIsland; uniform vec3 uIslandForm;
+uniform vec4 uIsland; uniform vec4 uIslandForm;
 vec3 triRock(vec3 p,vec3 n){
   vec3 w=pow(abs(n),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
   return texture(uRock,p.zy).rgb*w.x+texture(uRock,p.xz).rgb*w.y+texture(uRock,p.xy).rgb*w.z;
@@ -218,7 +237,8 @@ void main(){
   vec2 local=vec2(uIsland.z*d.x+uIsland.w*d.y,-uIsland.w*d.x+uIsland.z*d.y)/uIslandForm.xy;
   float angle=atan(local.y+0.00001,local.x+0.00001), beachAngle=uIslandForm.z;
   float cove=clamp(pow(max(0.0,cos(angle-beachAngle)),8.0)*0.95+
-                   pow(max(0.0,cos(angle-beachAngle-2.5)),14.0)*0.65,0.0,1.0);
+                   pow(max(0.0,cos(angle-beachAngle-2.5)),14.0)*0.65,0.0,1.0)*uIslandForm.w;
+  cove=clamp(cove,0.0,1.0);
   float beach=level*(0.10+0.90*cove)*(1.0-smoothstep(0.40,2.5,vWorld.y))*(0.7+0.3*n);
   albedo=mix(albedo,sand,beach*0.88);
   float snow=uSnowCover*level*smoothstep(4.0,12.0,vWorld.y)*(0.7+0.3*n);
@@ -237,20 +257,24 @@ void main(){
   if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
 }`;
 
-/* The existing photographic pine is kept as a depth-writing cutout. Cropping
-   its transparent margins roots the trunk; per-tree width, tint, height and
-   restrained wind sway make a grove feel less like repeated identical cards. */
+/* The photographic pine remains a depth-writing cutout. Subdividing the
+   cards vertically lets the trunk stay planted while the crown leans, bends
+   and flutters in passing, spatially coherent gusts. */
 const TREE_VS=HDR+`
 layout(location=0) in vec4 aTree; layout(location=1) in vec4 aInfo;
 uniform mat4 uVP; uniform vec3 uCamEff; uniform float uMirror,uTime,uWindStrength;
 uniform vec2 uWindDir;
 out vec2 vUV; out vec3 vWorld; out float vTint;
 void main(){
-  vec2 c=vec2(float(gl_VertexID&1),float(gl_VertexID>>1));
+  vec2 c=vec2(float(gl_VertexID&1),float(gl_VertexID>>1)/8.0);
   vec2 view=uCamEff.xz-aTree.xz; float d=max(length(view),0.001); view/=d;
   vec3 right=vec3(view.y,0.0,-view.x);
-  float sway=sin(uTime*(0.7+0.3*aInfo.w)+aInfo.w*18.0+aTree.x*0.4+aTree.z*0.2);
-  vec2 bend=uWindDir*sway*c.y*c.y*aTree.w*(0.004+0.012*uWindStrength);
+  vec2 side=vec2(-uWindDir.y,uWindDir.x);
+  float gust=0.72+0.22*sin(uTime*0.82-dot(aTree.xz,uWindDir)*0.16)+
+             0.10*sin(uTime*2.1+aInfo.w*12.0+dot(aTree.xz,side)*0.19);
+  float flutter=sin(uTime*(2.2+aInfo.z)+aInfo.w*19.0+c.y*5.0);
+  vec2 bend=(uWindDir*(0.035+0.13*gust)+side*flutter*0.018)*
+            clamp(uWindStrength,0.0,1.5)*c.y*c.y*aTree.w;
   vec3 p=aTree.xyz+right*((c.x-0.5)*aTree.w*(0.43+0.14*aInfo.z))+
          vec3(bend.x,c.y*aTree.w,bend.y);
   vWorld=p; vUV=vec2(aInfo.x>0.5?1.0-c.x:c.x,mix(0.08,0.92,c.y)); vTint=aInfo.y;
@@ -266,8 +290,9 @@ void main(){
   /* PNGs are uploaded with straight alpha: dividing RGB by alpha creates
      pale halos and bleaches the needles at their mipmapped edges. */
   if(tex.a<0.20) discard;
-  vec3 alb=pow(tex.rgb,vec3(1.9))*(0.83+0.30*vTint);
-  alb*=mix(0.72,1.08,smoothstep(0.08,0.72,vUV.y));
+  vec3 alb=pow(tex.rgb,vec3(1.9))*(0.78+0.38*vTint);
+  alb*=mix(0.68,1.12,smoothstep(0.08,0.76,vUV.y));
+  alb*=1.0-0.16*uRain;
   float snow=uSnowCover*smoothstep(0.44,0.78,vUV.y)*smoothstep(0.28,0.65,tex.rgb.g)*0.32;
   alb=mix(alb,vec3(0.58,0.65,0.67),snow);
   vec3 col=alb*(vec3(0.28+0.50*uAmbLum)+uHorizon*0.22+uSunCol*0.17);
@@ -276,10 +301,10 @@ void main(){
 }`;
 const pIsland=program(ISLAND_VS,ISLAND_FS), pTree=program(TREE_VS,TREE_FS);
 
-function makeIslandTrees(random){
+function makeIslandTrees(random,options){
   const data=[], normal={nx:0,ny:1,nz:0};
   for(const I of islands.land){
-    const target=Math.round(I.rx*I.rz*0.64), planted=[];
+    const target=Math.round(I.rx*I.rz*0.64*options.trees), planted=[];
     let added=0;
     for(let tries=0;tries<target*24&&added<target;tries++){
       const u=(random()*2-1)*0.91,v=(random()*2-1)*0.91;
@@ -292,7 +317,7 @@ function makeIslandTrees(random){
       const cover=islandNoise(x*0.115,z*0.115,I.seed+222)*0.7+
                   islandNoise(x*0.28+13,z*0.28-7,I.seed+333)*0.3;
       if(random()>0.10+0.85*sstep(0.37,0.60,cover)) continue;
-      const height=1.8+3.4*Math.pow(random(),0.85), spacing=0.62+height*0.08;
+      const height=(1.8+3.4*Math.pow(random(),0.85))*options.treeScale, spacing=0.62+height*0.08;
       let crowded=false;
       for(const t of planted) if((x-t.x)*(x-t.x)+(z-t.z)*(z-t.z)<spacing*spacing){crowded=true;break;}
       if(crowded) continue;
@@ -331,16 +356,28 @@ function makeIslandCoast(){
   }
 }
 
+/* Planting changes do not need to rebuild the terrain or clear its surf. */
+function rebuildIslandTrees(options){
+  if(!islands.active) return;
+  if(islands.trees){ gl.deleteVertexArray(islands.trees.vao); gl.deleteBuffer(islands.trees.buffer); }
+  makeIslandTrees(islandRandom(islands.seed^0xa5c39e21),options);
+}
+
 function disposeIslands(){
   if(typeof clearCliffSurf==='function') clearCliffSurf();
+  if(typeof disposeIslandDetails==='function') disposeIslandDetails();
   for(const I of islands.land){ gl.deleteVertexArray(I.vao);gl.deleteBuffer(I.vb);gl.deleteBuffer(I.ib); }
   if(islands.trees){ gl.deleteVertexArray(islands.trees.vao); gl.deleteBuffer(islands.trees.buffer); }
   islands.land=[]; islands.coast=[]; islands.trees=null; islands.treeCount=0;
 }
-function generateIslands(seed){
+function generateIslands(seed,options){
   disposeIslands();
   islands.seed=seed===undefined?Math.floor(Math.random()*4294967296):seed>>>0;
-  const random=islandRandom(islands.seed);
+  islands.options=islandConfig(options);
+  const config=islands.options, style=ISLAND_STYLES[config.style], random=islandRandom(islands.seed);
+  /* A common seeded rotation and reflection changes the whole silhouette,
+     without sacrificing the water channels between the islands. */
+  const layoutAngle=(random()-0.5)*1.9, lc=Math.cos(layoutAngle),ls=Math.sin(layoutAngle),flip=random()<0.5?-1:1;
   /* Well-spaced centres keep a navigable channel between every island even
      after the seeded rotations, coastline variations and small position jitter. */
   const layouts=[
@@ -351,10 +388,14 @@ function generateIslands(seed){
     [ 31,  7, 8.7, 7.0,5.2,4.7,120,2.8]
   ];
   islands.active=true; loadIslandTextures();
-  for(let i=0;i<layouts.length;i++){
-    const p=layouts[i],ang=(random()-0.5)*1.1;
-    const I={x:p[0]+(random()-0.5)*2,z:p[1]+(random()-0.5)*2,rx:p[2]*(0.94+random()*0.12),rz:p[3]*(0.94+random()*0.12),
-      cliff:p[4]*(0.9+random()*0.2),peak:p[5]*(0.85+random()*0.3),n:p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
+  for(let i=0;i<config.count;i++){
+    const p=layouts[i],ang=(random()-0.5)*1.3+layoutAngle;
+    const px=p[0]*flip,pz=p[1]+19;
+    const I={x:lc*px-ls*pz+(random()-0.5)*2.5,z:ls*px+lc*pz-19+(random()-0.5)*2.5,
+      rx:p[2]*(0.94+random()*0.12),rz:p[3]*(0.94+random()*0.12),
+      cliff:p[4]*(0.9+random()*0.2)*style.cliff*config.relief,
+      peak:p[5]*(0.85+random()*0.3)*style.peak*config.relief,n:p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
+      coast:config.coast,beachWidth:config.beach*style.beach,
       phase:random()*Math.PI*2,beach:i===0?Math.atan2(Math.cos(ang)/p[3],Math.sin(ang)/p[2])+(random()-0.5)*0.5:random()*Math.PI*2,
       peakX:(random()-0.5)*0.4,peakZ:(random()-0.5)*0.4,seed:(islands.seed+i*131)|0};
     /* Conservative dry-land bounds include the maximum coastline distortion.
@@ -367,7 +408,10 @@ function generateIslands(seed){
     I.extent=Math.max(I.rx,I.rz)*1.8;
     makeIslandMesh(I); islands.land.push(I);
   }
-  makeIslandMap(); makeIslandTrees(random); makeIslandCoast();
+  makeIslandMap();
+  makeIslandTrees(islandRandom(islands.seed^0xa5c39e21),config);
+  if(typeof makeIslandDetails==='function') makeIslandDetails(islandRandom(islands.seed^0x19b6af42),config);
+  makeIslandCoast();
   islands.nextCrash=simT+0.3;
   return islands.seed;
 }
@@ -387,7 +431,7 @@ function drawIslands(mode,mirror){
   bindIslandTexture(8,islandTextures.sand,pIsland,'uSand'); bindIslandTexture(9,islandTextures.talus,pIsland,'uTalus');
   for(const I of islands.land){
     gl.uniform4f(L(pIsland,'uIsland'),I.x,I.z,I.cs,I.sn);
-    gl.uniform3f(L(pIsland,'uIslandForm'),I.rx,I.rz,I.beach);
+    gl.uniform4f(L(pIsland,'uIslandForm'),I.rx,I.rz,I.beach,I.beachWidth);
     gl.bindVertexArray(I.vao); gl.drawElements(gl.TRIANGLES,I.indexCount,gl.UNSIGNED_SHORT,0);
   }
   if(islands.treeCount){
@@ -395,10 +439,11 @@ function drawIslands(mode,mirror){
     gl.uniformMatrix4fv(L(pTree,'uVP'),false,VP); gl.uniform3fv(L(pTree,'uCamEff'),ce);
     gl.uniform1f(L(pTree,'uMode'),mode); gl.uniform1f(L(pTree,'uMirror'),mirror);
     gl.uniform1f(L(pTree,'uSnowCover'),env.season===3?1:0);
-    gl.uniform1f(L(pTree,'uWindStrength'),sea); gl.uniform2f(L(pTree,'uWindDir'),Math.sin(windAng),Math.cos(windAng));
+    gl.uniform1f(L(pTree,'uWindStrength'),clamp(envS.wind/28,0,1)*islands.options.wind); gl.uniform2f(L(pTree,'uWindDir'),Math.sin(windAng),Math.cos(windAng));
     bindIslandTexture(10,islandTextures.pine,pTree,'uPine');
-    gl.bindVertexArray(islands.trees.vao); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,islands.treeCount);
+    gl.bindVertexArray(islands.trees.vao); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,18,islands.treeCount);
   }
+  if(typeof drawIslandDetails==='function') drawIslandDetails(mode,mirror,ce);
   gl.bindVertexArray(null); gl.activeTexture(gl.TEXTURE0);
 }
 
@@ -407,7 +452,8 @@ function drawIslands(mode,mirror){
    coastline and prevents a single crest overwhelming the particle budget. */
 function updateIslandSurf(dt){
   if(!islands.active||dt<=0) return;
-  const rough=sea>0.58&&(sky.storm>0.32||sea>0.82);
+  const strength=islands.options.surf;
+  const rough=strength>0.01&&sea>0.58&&(sky.storm>0.32||sea>0.82);
   const dx=Math.sin(windAng),dz=Math.cos(windAng),threshold=0.06+0.26*sea;
   let hit=null,best=-1;
   for(const p of islands.coast){
@@ -423,8 +469,8 @@ function updateIslandSurf(dt){
   }
   if(hit){
     hit.cool=simT+3.0+Math.random()*2;
-    islands.nextCrash=simT+0.32+Math.random()*0.38;
-    const power=clamp((sea-0.42)*1.4+sky.storm*0.3,0.35,1.25);
+    islands.nextCrash=simT+(0.32+Math.random()*0.38)/Math.max(0.35,strength);
+    const power=clamp(((sea-0.42)*1.4+sky.storm*0.3)*strength,0.35,1.25);
     cliffSplash(hit.x,surfH(hit.x,hit.z,simT),hit.z,hit.nx,hit.nz,power);
     if(typeof audioCliff==='function') audioCliff(power,hit.x,hit.z);
   }

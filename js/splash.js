@@ -106,6 +106,7 @@ function splash(b,vImp,hx,hz){
 
   /* The continuous, torn crown carries the main volume of water. */
   crownSurfSheet(x,y,z,r,P);
+  if(obl>0.3&&P>2.0) fanSurfSheet(x,y,z,r,P,fx,fz);
   const nDir=Math.floor(clamp(18+P*r*24,24,130)*q);
   const lobes=7+Math.floor(rnd()*7), ph=rnd()*6.2832, elev0=0.98+0.22*rnd(), vC=P*0.44;
   const nSeg=Math.min(4,2+Math.floor(P*0.15));

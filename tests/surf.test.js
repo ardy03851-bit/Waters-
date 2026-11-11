@@ -19,21 +19,22 @@ function fixture(){
   vm.runInContext(`
     const G=9.81,RHO_W=1000;
     const clamp=(x,a,b)=>x<a?a:x>b?b:x;
-    let grav=G, simT=0, windX=0, windZ=0, hqMode=false;
-    const islands={active:true}, balls=[], wv=[{A:1}];
-    function surfH(){return -100;}
+    let grav=G, simT=0, windX=0, windZ=0, hqMode=false, sea=0.2, windAng=0, waveA0=1, surfHeight=-100;
+    const islands={active:true}, balls=[], wv=[{A:1}], envS={wind:8}, cam={target:[0,0,0]};
+    function surfH(){return surfHeight;} function islandGround(){return -1000;}
     function addFoam(){} function addRing(){} function addRipple(){}
     ${fs.readFileSync(path.join(root,'splash.js'),'utf8')}
     ${fs.readFileSync(path.join(root,'surf.js'),'utf8')}
     globalThis.api={
-      cliffSplash,crownSurfSheet,jetSurfSheet,clearCliffSurf,clearSplashes,
-      tick(dt){simT+=dt;particlesStep(dt);},
+      splash,cliffSplash,crownSurfSheet,jetSurfSheet,fanSurfSheet,clearCliffSurf,clearSplashes,
+      tick(dt){simT+=dt;updateWindStreaks(dt);particlesStep(dt);},
       snapshot(){return {
         sheets:surfSheets.map(s=>({...s})), foam:coastFoam.map(s=>({...s})),
-        events:cliffEvents.length, particles:pCount,
+        events:cliffEvents.length, particles:pCount, wind:windStreaks.map(s=>({...s})),
         largestDrop:Math.max(0,...Array.from(PSize.slice(0,pCount)))
       };},
-      setGravity(g){grav=g;}
+      setGravity(g){grav=g;},
+      setWind(s,w,h){sea=s;envS.wind=w;surfHeight=h;}
     };
   `,ctx);
   return ctx.api;
@@ -44,6 +45,7 @@ test('breaking sheets, fine spray and foam age, pause, clear and stay bounded',(
   api.cliffSplash(5,0,3,0,1,1);
   let state=api.snapshot();
   assert.equal(state.sheets.length,2);
+  assert.deepEqual(Array.from(state.sheets,s=>s.kind).sort(),[0,4],'a storm impact combines a rising sheet with a curling lip');
   assert.equal(state.foam.length,1);
   assert.ok(state.particles>100&&state.particles<600,'a breaker uses fine spray, not an oversized particle cloud');
   assert.ok(state.largestDrop<0.8,'even aerosol puffs stay modest');
@@ -57,15 +59,17 @@ test('breaking sheets, fine spray and foam age, pause, clear and stay bounded',(
 
   api.crownSurfSheet(0,0,0,0.6,12);
   api.jetSurfSheet(0,0,0,0.6,7);
+  api.fanSurfSheet(0,0,0,0.6,9,1,0);
   api.clearCliffSurf();
   state=api.snapshot();
-  assert.deepEqual(Array.from(state.sheets,s=>s.kind).sort(),[1,2],'regenerating islands leaves ball splashes alone');
+  assert.deepEqual(Array.from(state.sheets,s=>s.kind).sort(),[1,2,3],'regenerating islands leaves ball splashes alone');
   assert.equal(state.foam.length,0);
   assert.equal(state.events,0);
 
   for(let i=0;i<100;i++) api.cliffSplash(i,0,0,0,1,1);
   state=api.snapshot();
   assert.ok(state.sheets.length<=48);
+  assert.ok(new Set(Array.from(state.sheets,s=>s.width.toFixed(3))).size>4,'breakers vary in width');
   assert.ok(state.foam.length<=24);
   assert.ok(state.particles<=16000);
   api.tick(6);
@@ -86,4 +90,43 @@ test('sheet lifetimes are finite under different gravity settings',()=>{
     assert.ok(api.snapshot().sheets.every(s=>Number.isFinite(s.life)&&s.life>0&&s.life<=2.5));
     api.clearSplashes();
   }
+});
+
+
+test('oblique fans and wind-torn crest veils are varied, bounded and pause safely',()=>{
+  const api=fixture();
+  api.fanSurfSheet(1,0,2,0.5,12,0.6,0.8);
+  let state=api.snapshot();
+  assert.equal(state.sheets[0].kind,3);
+  assert.ok(state.sheets[0].life>0&&state.sheets[0].life<=1.5);
+  api.setWind(0.95,24,1);
+  for(let i=0;i<360;i++) api.tick(1/60);
+  state=api.snapshot();
+  assert.ok(state.wind.length>0&&state.wind.length<=28,'strong winds produce a bounded pool of elongated crest veils');
+  assert.ok(state.wind.every(s=>s.width>=1.6&&s.width<=4.6&&s.life>0&&s.life<=1.6));
+  const ages=Array.from(state.wind,s=>s.age);
+  api.tick(0);
+  assert.deepEqual(Array.from(api.snapshot().wind,s=>s.age),ages,'pausing freezes wind spray');
+  api.setWind(0.2,3,1);
+  for(let i=0;i<150;i++) api.tick(1/60);
+  assert.equal(api.snapshot().wind.length,0,'wind spray dissipates in calm conditions');
+  api.setWind(0.95,24,1);
+  for(let i=0;i<100;i++) api.tick(1/60);
+  api.clearSplashes();
+  assert.equal(api.snapshot().wind.length,0,'clear removes wind spray too');
+});
+
+
+test('angled water entries add a directional sheet, vertical entries keep a radial crown',()=>{
+  const api=fixture();
+  const ball={x:0,z:0,wh:0,r:0.5,m:500,V:1};
+  api.splash(ball,10,8,0);
+  let state=api.snapshot();
+  assert.deepEqual(Array.from(state.sheets,s=>s.kind).sort(),[1,3]);
+  const fan=state.sheets.find(s=>s.kind===3);
+  assert.ok(fan.nx>0.99&&Math.abs(fan.nz)<0.001,'the fan follows the impact direction');
+  api.clearSplashes();
+  api.splash(ball,10,0,0);
+  state=api.snapshot();
+  assert.deepEqual(Array.from(state.sheets,s=>s.kind),[1]);
 });

@@ -39,6 +39,7 @@ function drawBalls(mode,mirror){
     gl.uniform3f(L(pBall,'uPos'),b.x,b.y,b.z); gl.uniform1f(L(pBall,'uR'),b.r);
     gl.uniformMatrix3fv(L(pBall,'uRot'),false,m);
     gl.uniform1f(L(pBall,'uType'),b.type); gl.uniform1f(L(pBall,'uPlane'),b.wh);
+    gl.uniform1f(L(pBall,'uWet'),clamp(Math.max(b.wet,b.frac*2),0,1));
     gl.uniform3f(L(pBall,'uCamEff'),eye[0],mirror?2*b.wh-eye[1]:eye[1],eye[2]);
     gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
   }
@@ -75,7 +76,7 @@ function render(){
   gl.useProgram(pWater); setSky(pWater);
   gl.uniformMatrix4fv(L(pWater,'uVP'),false,VP);
   gl.uniform3fv(L(pWater,'uCam'),eye); gl.uniform3fv(L(pWater,'uCamR'),camR); gl.uniform3fv(L(pWater,'uCamF'),camF);
-  gl.uniform4fv(L(pWater,'uW'),uWArr); gl.uniform1fv(L(pWater,'uQ'),uQArr);
+  gl.uniform4fv(L(pWater,'uW'),uWArr); gl.uniform1fv(L(pWater,'uQ'),uQArr); gl.uniform1fv(L(pWater,'uPhase'),uPhaseArr);
   gl.uniform1f(L(pWater,'uRipR'),RR); gl.uniform1f(L(pWater,'uRipN'),RN); gl.uniform1f(L(pWater,'uA0'),waveA0);
   gl.uniform1f(L(pWater,'uIslands'),islands.active?1:0); gl.uniform1f(L(pWater,'uSeaState'),sea);
   gl.uniform2f(L(pWater,'uWind'),Math.sin(windAng),Math.cos(windAng));
@@ -92,6 +93,7 @@ function render(){
 
   /* Impact foam follows the same waves even beyond the local ripple grid. */
   drawSurfFoam();
+  drawWindSpray();
 
   /* balls above the surface */
   drawBalls(0,0);
@@ -245,6 +247,7 @@ function frame(now){
   while(acc>=H&&steps<12){ physicsStep(); acc-=H; steps++; }
   if(steps>=12) acc=0;
   updateIslandSurf(sdt);
+  updateWindStreaks(sdt);
   particlesStep(sdt);
   updatePrecip(sdt);
   uploadRipple();
