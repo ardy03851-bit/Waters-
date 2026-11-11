@@ -12,7 +12,7 @@ let motionBlurOn=true, blurStrength=1, lensFxOn=true;
 let hqMode=false;
 /* previous frame's view-projection, for the motion-blur reprojection */
 const prevVPm=new Float32Array(16);
-let havePrev=false;
+let havePrev=false, frameInterval=1/60;
 const QUALITY_PR={low:0.6,medium:0.85,high:1.0,ultra:Math.max(1,maxPR)};
 function setQuality(q){
   quality=QUALITY_PR[q]?q:'auto';
@@ -21,7 +21,7 @@ function setQuality(q){
 }
 function resize(){
   const w=Math.max(2,Math.floor(innerWidth*pr)), h=Math.max(2,Math.floor(innerHeight*pr));
-  if(w!==curW||h!==curH){ curW=w;curH=h;canvas.width=w;canvas.height=h; makeTargets(w,h); }
+  if(w!==curW||h!==curH){ curW=w;curH=h;canvas.width=w;canvas.height=h; makeTargets(w,h); havePrev=false; }
 }
 addEventListener('resize',resize); addEventListener('orientationchange',()=>setTimeout(resize,200));
 
@@ -30,9 +30,6 @@ function drawBalls(mode,mirror){
   gl.useProgram(pBall); setSky(pBall);
   gl.uniformMatrix4fv(L(pBall,'uVP'),false,VP);
   gl.uniform1f(L(pBall,'uMode'),mode); gl.uniform1f(L(pBall,'uMirror'),mirror);
-  /* ball shutter: the same exposure the splash drops use, scaled by the
-     blur setting (and shortened in slow motion, like a high-speed camera) */
-  gl.uniform1f(L(pBall,'uShutterB'),motionBlurOn?Math.min(shutter*0.6*blurStrength,0.04):0);
   gl.bindVertexArray(sphereVAO);
   for(const b of balls){
     const q=b.q,x=q[0],y=q[1],z=q[2],w=q[3],m=b.rot;
@@ -41,7 +38,6 @@ function drawBalls(mode,mirror){
     m[6]=2*(x*z+w*y);m[7]=2*(y*z-w*x);m[8]=1-2*(x*x+y*y);
     gl.uniform3f(L(pBall,'uPos'),b.x,b.y,b.z); gl.uniform1f(L(pBall,'uR'),b.r);
     gl.uniformMatrix3fv(L(pBall,'uRot'),false,m);
-    gl.uniform3f(L(pBall,'uVel'),b.vx,b.vy,b.vz);
     gl.uniform1f(L(pBall,'uType'),b.type); gl.uniform1f(L(pBall,'uPlane'),b.wh);
     gl.uniform3f(L(pBall,'uCamEff'),eye[0],mirror?2*b.wh-eye[1]:eye[1],eye[2]);
     gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
@@ -82,6 +78,7 @@ function render(){
   gl.uniform4fv(L(pWater,'uW'),uWArr); gl.uniform1fv(L(pWater,'uQ'),uQArr);
   gl.uniform1f(L(pWater,'uRipR'),RR); gl.uniform1f(L(pWater,'uRipN'),RN); gl.uniform1f(L(pWater,'uA0'),waveA0);
   gl.uniform1f(L(pWater,'uIslands'),islands.active?1:0); gl.uniform1f(L(pWater,'uSeaState'),sea);
+  gl.uniform2f(L(pWater,'uWind'),Math.sin(windAng),Math.cos(windAng));
   gl.uniform2f(L(pWater,'uRes'),W,Hh); gl.uniform2f(L(pWater,'uNF'),0.1,3000);
   gl.uniform1i(L(pWater,'uRip'),1); gl.uniform1i(L(pWater,'uScene'),2); gl.uniform1i(L(pWater,'uSceneD'),3); gl.uniform1i(L(pWater,'uRefl'),4); gl.uniform1i(L(pWater,'uIslandMap'),5);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,texRip);
@@ -93,9 +90,14 @@ function render(){
   gl.bindVertexArray(waterVAO); gl.drawElements(gl.TRIANGLES,waterIdxCount,gl.UNSIGNED_INT,0);
   gl.bindVertexArray(null);
 
+  /* Impact foam follows the same waves even beyond the local ripple grid. */
+  drawSurfFoam();
+
   /* balls above the surface */
   drawBalls(0,0);
 
+  /* Thin breaking sheets sit behind the fine droplets and mist. */
+  drawSurfSheets();
   /* splash particles (premultiplied alpha so sun glints can add on top) */
   if(pCount>0){
     const nf=packParticles();
@@ -103,7 +105,7 @@ function render(){
     gl.useProgram(pPart); setSky(pPart);
     gl.uniformMatrix4fv(L(pPart,'uVP'),false,VP);
     gl.uniform3fv(L(pPart,'uCam'),eye); gl.uniform3fv(L(pPart,'uCamR'),camR); gl.uniform3fv(L(pPart,'uCamU'),camU);
-    gl.uniform1f(L(pPart,'uShutter'),shutter);
+    gl.uniform1f(L(pPart,'uShutter'),motionBlurOn?Math.min(shutter*blurStrength,0.035):0);
     gl.uniform1f(L(pPart,'uPxW'),2*tanH/Hh);
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
     gl.bindVertexArray(partVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,pCount); gl.bindVertexArray(null);
@@ -114,31 +116,88 @@ function render(){
   Hooks.run('render');
 }
 
-/* post pass: camera motion blur (reprojection against last frame's camera),
-   plus lens effects – chromatic aberration and a gentle vignette */
+/* Draw rigid object motion against the main depth, then reduce it to 8x8
+   tiles. Both passes are skipped when blur is off or history is invalid. */
+function drawMotionVectors(){
+  const W=canvas.width,Hh=canvas.height;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.fb); gl.viewport(0,0,W,Hh);
+  gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+  /* These RGBA8 bytes are packed data, not colours: dithering can corrupt
+     a high nibble and turn a tiny velocity into a large one. */
+  gl.disable(gl.DITHER);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false); gl.disable(gl.BLEND);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1,-1);
+  gl.useProgram(pMotion);
+  gl.uniformMatrix4fv(L(pMotion,'uVP'),false,VP); gl.uniformMatrix4fv(L(pMotion,'uPrevVP'),false,prevVPm);
+  gl.uniform2f(L(pMotion,'uRes'),W,Hh);
+  gl.bindVertexArray(sphereVAO);
+  for(const b of balls){
+    const prev=b.motionPrev;
+    gl.uniform3f(L(pMotion,'uPos'),b.x,b.y,b.z); gl.uniform1f(L(pMotion,'uR'),b.r);
+    gl.uniformMatrix3fv(L(pMotion,'uRot'),false,b.rot);
+    gl.uniform3f(L(pMotion,'uPrevPos'),prev?prev.pos[0]:b.x,prev?prev.pos[1]:b.y,prev?prev.pos[2]:b.z);
+    gl.uniformMatrix3fv(L(pMotion,'uPrevRot'),false,prev?prev.rot:b.rot);
+    gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
+  }
+  gl.bindVertexArray(null); gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb); gl.viewport(0,0,motion.tileW,motion.tileH);
+  gl.disable(gl.DEPTH_TEST); gl.useProgram(pMotionTile);
+  gl.uniform2i(L(pMotionTile,'uSize'),W,Hh); gl.uniform1i(L(pMotionTile,'uVelocity'),0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,motion.color);
+  gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null);
+  gl.enable(gl.DITHER);
+}
+function rememberMotion(){
+  prevVPm.set(VP);
+  for(const b of balls){
+    if(!b.motionPrev) b.motionPrev={pos:new Float32Array(3),rot:new Float32Array(9)};
+    b.motionPrev.pos[0]=b.x; b.motionPrev.pos[1]=b.y; b.motionPrev.pos[2]=b.z;
+    b.motionPrev.rot.set(b.rot);
+  }
+  havePrev=true;
+}
+
+/* Skip the extra passes altogether when the camera and rigid bodies are
+   still (particularly useful while paused). Water and droplets keep their
+   own independently animated shading and exposure. */
+function hasFrameMotion(){
+  for(let i=0;i<16;i++) if(Math.abs(VP[i]-prevVPm[i])>1e-6) return true;
+  for(const b of balls){
+    const p=b.motionPrev;
+    if(!p||Math.abs(b.x-p.pos[0])+Math.abs(b.y-p.pos[1])+Math.abs(b.z-p.pos[2])>1e-5) return true;
+    for(let i=0;i<9;i++) if(Math.abs(b.rot[i]-p.rot[i])>1e-5) return true;
+  }
+  return false;
+}
+/* Depth-aware, bounded camera + object blur. Exposure is normalized by real
+   frame time, rather than making a low-FPS frame smear much farther. */
 function postPass(){
   const W=canvas.width,Hh=canvas.height;
-  const mb=(motionBlurOn&&havePrev)?Math.min(blurStrength,2):0;
+  const mb=motionBlurOn&&havePrev&&frameInterval<=0.2&&hasFrameMotion()?
+    clamp(blurStrength*(1/90)/Math.max(frameInterval,1/240),0,2):0;
+  const hasVelocity=mb>0.001&&balls.length>0;
+  if(hasVelocity) drawMotionVectors();
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.viewport(0,0,W,Hh);
   gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
   gl.useProgram(pPost);
-  gl.uniform2f(L(pPost,'uRes'),W,Hh);
-  gl.uniform2f(L(pPost,'uNF'),0.1,3000);
-  gl.uniform2f(L(pPost,'uTanAsp'),tanH,aspect);
+  gl.uniform2f(L(pPost,'uRes'),W,Hh); gl.uniform2f(L(pPost,'uTileRes'),motion.tileW,motion.tileH);
+  gl.uniform2f(L(pPost,'uNF'),0.1,3000); gl.uniform2f(L(pPost,'uTanAsp'),tanH,aspect);
   gl.uniform3fv(L(pPost,'uCam'),eye);
   gl.uniform3fv(L(pPost,'uCamF'),camF); gl.uniform3fv(L(pPost,'uCamR'),camR); gl.uniform3fv(L(pPost,'uCamU'),camU);
   gl.uniformMatrix4fv(L(pPost,'uPrevVP'),false,prevVPm);
-  gl.uniform1f(L(pPost,'uMB'),mb);
-  gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0);
-  gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
+  gl.uniform1f(L(pPost,'uMB'),mb); gl.uniform1f(L(pPost,'uHasVelocity'),hasVelocity?1:0);
+  gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0); gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
+  gl.uniform1i(L(pPost,'uScene'),0); gl.uniform1i(L(pPost,'uDepth'),1);
+  gl.uniform1i(L(pPost,'uVelocity'),2); gl.uniform1i(L(pPost,'uMotionTile'),3);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,post.depth);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,motion.color);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D,motion.tile);
   gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3);
-  gl.bindVertexArray(null);
-  gl.activeTexture(gl.TEXTURE0);
-  /* remember this frame's camera for the next one */
-  prevVPm.set(VP); havePrev=true;
+  gl.bindVertexArray(null); gl.activeTexture(gl.TEXTURE0);
+  rememberMotion();
 }
 
 /* save the current frame as a PNG (rendered and read back in the same task, so no preserveDrawingBuffer needed) */
@@ -162,7 +221,9 @@ let lastT=performance.now(), acc=0, ema=16.7, frameN=0, lastStat=0, cool=0, ceil
 function frame(now){
   requestAnimationFrame(frame);
   const rdtMs=now-lastT; lastT=now; if(!(rdtMs>0)) return;
-  const dt=Math.min(rdtMs/1000,0.05);
+  frameInterval=rdtMs/1000;
+  if(frameInterval>0.2) havePrev=false;
+  const dt=Math.min(frameInterval,0.05);
   ema=ema*0.94+Math.min(rdtMs,100)*0.06; frameN++; cool--; ceilTimer+=dt;
   if(quality==='auto'){
     /* enhanced graphics keeps a much higher resolution floor before scaling down */
@@ -198,6 +259,7 @@ function frame(now){
   }
 }
 /* a lost GPU context cannot be repaired in place – reload once it comes back */
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) havePrev=false; });
 canvas.addEventListener('webglcontextlost',e=>{ e.preventDefault(); showErr('The graphics context was lost. Reloading…'); });
 canvas.addEventListener('webglcontextrestored',()=>location.reload());
 

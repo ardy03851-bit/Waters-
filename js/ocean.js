@@ -90,8 +90,8 @@ const emptyVAO=gl.createVertexArray();
    Ocean wave model (shared by GPU shader and CPU physics)
    ============================================================ */
 let windAng=1.1;   /* direction the wind (and the waves) travel towards, radians */
-const WL=[26,17,11.5,7.2,4.6,3.0,2.0,1.3];
-const WOFF=[0,0.35,-0.4,0.8,-0.9,1.3,-1.5,2.0];
+const WL=[31,22.5,15,9.8,6.4,4.1,2.5,1.4];
+const WOFF=[0,0.9,-0.75,0.45,-1.1,1.3,-1.5,2.0];
 const wv=WL.map((Lw,i)=>{const k=2*Math.PI/Lw,a=windAng+WOFF[i];return{L:Lw,k,om:Math.sqrt(G*k),dx:Math.sin(a),dz:Math.cos(a),ph:i*2.399,A:0,q:0,qk:0};});
 const uWArr=new Float32Array(32), uQArr=new Float32Array(8);
 let waveA0=0.3;
@@ -99,7 +99,7 @@ function updateWaves(s){
   for(let i=0;i<8;i++){
     const w=wv[i], a=windAng+WOFF[i];
     w.dx=Math.sin(a); w.dz=Math.cos(a);
-    w.A=w.L*0.016*(0.25+1.25*s);
+    w.A=w.L*0.014*(0.25+1.25*s);
     w.q=0.085*(0.35+0.65*s); w.qk=w.q/w.k;
     uWArr[i*4]=w.dx;uWArr[i*4+1]=w.dz;uWArr[i*4+2]=w.k;uWArr[i*4+3]=w.A; uQArr[i]=w.q;
   }
@@ -226,10 +226,11 @@ function uploadRipple(){
 /* ============================================================
    Render targets (scene colour/depth for refraction, reflection)
    ============================================================ */
-let scene=null, refl=null, post=null, rW=0, rH=0;
+let scene=null, refl=null, post=null, motion=null, rW=0, rH=0;
 function makeTargets(w,h){
   if(scene){ gl.deleteFramebuffer(scene.fb); gl.deleteTexture(scene.color); gl.deleteTexture(scene.depth); }
   if(refl){ gl.deleteFramebuffer(refl.fb); gl.deleteTexture(refl.color); gl.deleteRenderbuffer(refl.depth); }
+  if(motion){ gl.deleteFramebuffer(motion.fb); gl.deleteTexture(motion.color); gl.deleteFramebuffer(motion.tileFb); gl.deleteTexture(motion.tile); }
   if(post){ gl.deleteFramebuffer(post.fb); gl.deleteTexture(post.color); gl.deleteTexture(post.depth); }
   gl.activeTexture(gl.TEXTURE7);
   scene={fb:gl.createFramebuffer(),color:gl.createTexture(),depth:gl.createTexture()};
@@ -272,6 +273,26 @@ function makeTargets(w,h){
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,post.color,0);
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
   if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Post FBO incomplete');
+
+  /* A separate colour target shares the main depth, so only visible ball
+     fragments write motion. RGBA8 packing avoids requiring float render targets. */
+  motion={fb:gl.createFramebuffer(),color:gl.createTexture(),tileFb:gl.createFramebuffer(),tile:gl.createTexture(),
+    tileW:Math.ceil(w/8),tileH:Math.ceil(h/8)};
+  gl.bindTexture(gl.TEXTURE_2D,motion.color);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.color,0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Motion FBO incomplete');
+  gl.bindTexture(gl.TEXTURE_2D,motion.tile);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,motion.tileW,motion.tileH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.tile,0);
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Motion tile FBO incomplete');
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
 }
 

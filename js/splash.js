@@ -46,49 +46,49 @@ function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt*(hqMode?1
 
 const splashEvents=[], cliffEvents=[];
 
-/* A breaker climbing a cliff: a wide sheet of aerated water, fast clear
-   droplets and a wind-blown mist cloud. A short secondary event below lets
-   the white water fall back down the rock instead of vanishing at the crest. */
+/* A coherent sheet supplies the body of a breaker. The particles here are
+   only its torn-off droplets and wind-blown aerosol, never large white balls. */
 function cliffSplash(x,y,z,nx,nz,power){
-  const q=budget(), tx=-nz,tz=nx, width=3.4+2.2*power;
+  const q=budget(), tx=-nz,tz=nx, width=3.5+2.0*power;
   y=clamp(y,-0.3,2.0);
-  const n=Math.floor((650+450*power)*q);
+  cliffSurfSheets(x,y,z,nx,nz,power);
+  const n=Math.floor((115+80*power)*q);
   for(let i=0;i<n;i++){
-    const along=(rnd()-0.5)*width, f=rnd(), core=1-Math.min(1,Math.abs(along)/(width*0.56));
-    const out=0.6+2.8*rnd(), up=(5.0+12.5*Math.pow(f,0.6))*(0.65+0.35*core)*(0.75+0.25*power);
-    emit(x+tx*along+nx*(rnd()-0.5)*0.35,y+0.12+rnd()*0.5,z+tz*along+nz*(rnd()-0.5)*0.35,
-      nx*out+tx*(rnd()-0.5)*2.2,up,nz*out+tz*(rnd()-0.5)*2.2,
-      (0.13+0.20*(1-f))*(0.8+0.4*rnd()),1.3+rnd()*1.2,0.82+0.18*rnd(),0.14+0.28*rnd(),1,1);
+    const along=(rnd()-0.5)*width, f=rnd(), core=1-Math.min(1,Math.abs(along)/(width*0.55));
+    const out=0.7+2.6*rnd(), up=(5.0+9.0*Math.pow(f,0.6))*(0.7+0.3*core)*(0.75+0.25*power);
+    emit(x+tx*along+nx*(0.1+rnd()*0.4),y+0.12+rnd()*0.45,z+tz*along+nz*(0.1+rnd()*0.4),
+      nx*out+tx*(rnd()-0.5)*2.0,up,nz*out+tz*(rnd()-0.5)*2.0,
+      (0.025+0.035*(1-f))*(0.75+0.5*rnd()),1.1+rnd()*1.1,0.55+0.4*rnd(),0.18+0.32*rnd(),1,1);
   }
-  /* Fine spray fans outward and catches the light above the white water. */
-  for(let i=0;i<Math.floor(300*power*q);i++){
+  /* Tiny clear drops scatter above and away from the turbulent sheet. */
+  for(let i=0;i<Math.floor(170*power*q);i++){
     const along=(rnd()-0.5)*width, out=1.0+rnd()*4.0;
-    emit(x+tx*along,y+0.2+rnd()*0.6,z+tz*along,
-      nx*out+tx*(rnd()-0.5)*3,7.0+rnd()*12.0*power,nz*out+tz*(rnd()-0.5)*3,
-      0.04+0.075*rnd(),1.5+rnd()*1.2,0.2+0.65*rnd(),0.18+0.4*rnd(),1,1);
+    emit(x+tx*along,y+0.2+rnd()*0.5,z+tz*along,
+      nx*out+tx*(rnd()-0.5)*3,6.0+rnd()*11.0*power,nz*out+tz*(rnd()-0.5)*3,
+      0.008+0.022*rnd(),1.1+rnd()*1.1,0.12+0.55*rnd(),0.2+0.45*rnd(),1,1);
   }
-  for(let i=0;i<Math.floor(36*power*q);i++){
+  for(let i=0;i<Math.floor(12*power*q);i++){
     const along=(rnd()-0.5)*width;
-    mist(x+tx*along+nx*rnd(),y+0.5+rnd()*2,z+tz*along+nz*rnd(),
-      nx*(0.5+rnd())+windX*0.15,1+rnd()*2.8,nz*(0.5+rnd())+windZ*0.15,
-      0.55+rnd()*0.8,1.8+rnd()*1.5);
+    mist(x+tx*along+nx*rnd(),y+0.4+rnd()*1.6,z+tz*along+nz*rnd(),
+      nx*(0.5+rnd())+windX*0.15,0.8+rnd()*2.2,nz*(0.5+rnd())+windZ*0.15,
+      0.3+rnd()*0.45,1.3+rnd()*1.2);
   }
   addFoam(x+nx*0.7,z+nz*0.7,2.4,0.85);
   addRing(x+nx*0.5,z+nz*0.5,2.1,0.6,0.08);
-  cliffEvents.push({x,y,z,nx,nz,tx,tz,width,power,start:simT+0.32,end:simT+1.5,acc:0});
+  cliffEvents.push({x,y,z,nx,nz,tx,tz,width,power,start:simT+0.4,end:simT+1.7,acc:0});
 }
 function runCliffEvents(dt){
   for(let i=cliffEvents.length-1;i>=0;i--){
     const e=cliffEvents[i];
     if(!islands.active||simT>e.end){cliffEvents.splice(i,1);continue;}
     if(simT<e.start) continue;
-    e.acc+=dt*350*e.power*budget();
+    e.acc+=dt*85*e.power*budget();
     while(e.acc>=1){
       e.acc--;
-      const along=(rnd()-0.5)*e.width, h=1.0+rnd()*(3.3+2.3*e.power), off=0.12+rnd()*0.6;
+      const along=(rnd()-0.5)*e.width, h=0.9+rnd()*(2.8+2.1*e.power), off=0.15+rnd()*0.45;
       emit(e.x+e.tx*along+e.nx*off,e.y+h,e.z+e.tz*along+e.nz*off,
-        e.nx*(0.1+rnd()*0.7),-0.5-rnd()*2.5,e.nz*(0.1+rnd()*0.7),
-        0.10+rnd()*0.14,0.7+rnd()*0.8,0.9+0.1*rnd(),0.4,1,1);
+        e.nx*(0.1+rnd()*0.7),-1.0-rnd()*3.0,e.nz*(0.1+rnd()*0.7),
+        0.018+rnd()*0.035,0.6+rnd()*0.7,0.65+0.3*rnd(),0.4,1,1);
     }
   }
 }
@@ -104,10 +104,11 @@ function splash(b,vImp,hx,hz){
   const x=b.x,z=b.z,y=b.wh, sc=0.55+0.45*r/0.4, q=budget();
   const hs=Math.hypot(hx,hz), fx=hs>1e-3?hx/hs:0, fz=hs>1e-3?hz/hs:0, obl=Math.min(1,hs/(vImp+1e-3));
 
-  /* crown */
-  const nDir=Math.floor(clamp(26+P*r*46,36,260)*q);
+  /* The continuous, torn crown carries the main volume of water. */
+  crownSurfSheet(x,y,z,r,P);
+  const nDir=Math.floor(clamp(18+P*r*24,24,130)*q);
   const lobes=7+Math.floor(rnd()*7), ph=rnd()*6.2832, elev0=0.98+0.22*rnd(), vC=P*0.44;
-  const nSeg=Math.min(8,4+Math.floor(P*0.3));
+  const nSeg=Math.min(4,2+Math.floor(P*0.15));
   for(let i=0;i<nDir;i++){
     const a=(i+rnd())/nDir*6.2832, ca=Math.cos(a), sa=Math.sin(a), al=ca*fx+sa*fz;
     const lobe=(0.70+0.30*Math.sin(a*lobes+ph))*(0.78+0.44*rnd());
@@ -117,7 +118,7 @@ function splash(b,vImp,hx,hz){
     for(let k=0;k<nSeg;k++){
       const f=(k+rnd())/nSeg, sp=vmax*(0.28+0.72*f);
       emit(x+ca*rr,y+0.02+0.05*f,z+sa*rr, ca*ce*sp+hx*0.22,se*sp,sa*ce*sp+hz*0.22,
-           (0.070-0.056*f)*sc*(0.7+0.6*rnd()), 1.0+rnd()*1.2, clamp(1.3-1.35*f+0.25*(rnd()-0.5),0,1), 0.22+0.55*f, 1, 0);
+           (0.042-0.032*f)*sc*(0.7+0.6*rnd()), 1.0+rnd()*1.2, clamp(1.3-1.35*f+0.25*(rnd()-0.5),0,1), 0.22+0.55*f, 1, 0);
     }
   }
   /* ejecta */
@@ -230,6 +231,7 @@ function runSplashEvents(dt){
         splashEvents.splice(i,1); continue;
       }
       e.V=Math.min(10.5,0.62*e.P)*(0.85+0.3*rnd()); e.D=0.13+0.016*e.P;
+      jetSurfSheet(e.x,h,e.z,e.r,e.V);
       addRipple(e.x,e.z,e.r*0.9,Math.min(0.14,0.014*e.P));
       addFoam(e.x,e.z,e.r*1.2,0.35);
       const sc=0.55+0.45*e.r/0.4;
@@ -240,12 +242,12 @@ function runSplashEvents(dt){
     const tau=(simT-e.t)/e.D;
     if(tau>=1){ splashEvents.splice(i,1); continue; }
     const h=surfH(e.x,e.z,simT), sc=0.55+0.45*e.r/0.4, w=e.r*(0.07+0.12*tau);
-    e.acc+=dt*(900+90*e.P)*budget();
+    e.acc+=dt*(250+35*e.P)*budget();
     while(e.acc>=1){
       e.acc-=1;
       const a=rnd()*6.2832, rr=w*Math.sqrt(rnd()), V=e.V*(1-0.72*tau)*(0.9+0.2*rnd()), sw=0.25+1.3*tau;
       emit(e.x+Math.cos(a)*rr,h+0.02,e.z+Math.sin(a)*rr, Math.cos(a)*rr*sw*4+(rnd()-0.5)*0.25,V,Math.sin(a)*rr*sw*4+(rnd()-0.5)*0.25,
-           (0.020+0.040*tau)*sc*(0.7+0.6*rnd()), 1.2+0.8*rnd(), clamp(0.45+0.7*tau+0.3*(rnd()-0.5),0,1), 0.18, 1, 0);
+           (0.012+0.022*tau)*sc*(0.7+0.6*rnd()), 1.2+0.8*rnd(), clamp(0.45+0.7*tau+0.3*(rnd()-0.5),0,1), 0.18, 1, 0);
     }
   }
 }
@@ -253,6 +255,7 @@ function runSplashEvents(dt){
 /* ---- integration + 7: rain-back ---- */
 function particlesStep(dt){
   if(dt<=0) return;
+  updateSurfSheets(dt);
   runSplashEvents(dt);
   runCliffEvents(dt);
   const wx=windX*0.3, wz=windZ*0.3, top=wv.reduce((s,w)=>s+w.A,0)+0.75;
@@ -290,7 +293,7 @@ function packParticles(){
     for(let i=0;i<pCount;i++){
       const kind=PKind[i], isMist=kind>1.5; if(isMist!==(pass===0)) continue;
       const age=1-PLife[i]/PMax[i]; let size=PSize[i], alpha;
-      if(isMist){ size*=1+2.4*age; alpha=0.26*Math.min(1,age*9)*Math.pow(1-age,1.3); }
+      if(isMist){ size*=1+1.5*age; alpha=0.15*Math.min(1,age*9)*Math.pow(1-age,1.3); }
       else { size*=1+0.55*age*kind; alpha=Math.min(1,PLife[i]/0.3)*(1-0.55*age*kind); }
       partData[o]=PX[i];partData[o+1]=PY[i];partData[o+2]=PZ[i];
       partData[o+3]=PVX[i];partData[o+4]=PVY[i];partData[o+5]=PVZ[i];
@@ -300,4 +303,4 @@ function packParticles(){
   }
   return o;
 }
-function clearSplashes(){ pCount=0; splashEvents.length=0; cliffEvents.length=0; }
+function clearSplashes(){ pCount=0; splashEvents.length=0; cliffEvents.length=0; clearSurf(); }
