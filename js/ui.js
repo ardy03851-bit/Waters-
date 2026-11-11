@@ -20,7 +20,7 @@ function toast(msg){
    ============================================================ */
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
-  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14,
+  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, islandSeed:0,
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
   fov:50, orbit:false, follow:false,
@@ -62,6 +62,9 @@ function dayPhase(h){
 /* every control in the app is described here; the DOM is generated from it */
 const CONTROLS=[
   {tab:'scene',t:'scenes'},
+  {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
+  {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
+  {tab:'scene',t:'note',text:'Storms and high swells send breakers and spray up the exposed cliffs.'},
   {tab:'scene',t:'seg',k:'launch',label:'Tapping the sea',opts:[['drop','Drops a ball'],['throw','Throws a ball']]},
   {tab:'scene',t:'range',k:'throwSpeed',label:'Throw speed',min:4,max:32,step:1,fmt:v=>v+' m/s'},
   {tab:'scene',t:'range',k:'size',label:'Ball size',min:0.5,max:2.2,step:0.01,fmt:v=>v.toFixed(1)+'×',dock:true},
@@ -101,7 +104,7 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
   {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
-  {tab:'system',t:'note',text:'Shortcuts: Space drop · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema mode · O auto-orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
+  {tab:'system',t:'note',text:'Shortcuts: Space drop · I islands · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema mode · O auto-orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
 const TABS=[['scene','Scene'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
@@ -111,6 +114,7 @@ function validValue(k,v){
   if(typeof v!==typeof d) return false;
   if(typeof v==='number'&&!isFinite(v)) return false;
   if(k==='type') return Number.isInteger(v)&&v>=0&&v<TYPES.length;
+  if(k==='islandSeed') return Number.isInteger(v)&&v>=0&&v<=0xffffffff;
   if(!c) return false;
   if(c.t==='range') return v>=c.min&&v<=c.max;
   if(c.t==='seg') return c.opts.some(o=>o[0]===v)||(k==='weather'&&v==='custom');
@@ -143,6 +147,12 @@ function apply(k){
     case 'maxBalls': MAXBALLS=v; while(balls.length>MAXBALLS){ const o=balls.shift(); if(grab&&grab.ball===o) grab=null; } break;
     case 'launch': launchMode=v; break;
     case 'throwSpeed': throwSpeed=v; break;
+    case 'islands':
+      if(v) generateIslands(S.islandSeed); else {
+        if(islands.active) for(const b of balls) if(Math.hypot(b.x,b.z)>28) b.islandRecovery=true;
+        removeIslands(); cliffEvents.length=0;
+      }
+      resetCamera(); break;
     case 'season': env.season=v; break;
     case 'weather': env.forceSnow=!!(WEATHERS[v]&&WEATHERS[v].snow); break;
     case 'hour': env.hour=v; break;
@@ -181,6 +191,10 @@ function setWeather(id,quiet){
 /* a change made by the user (as opposed to one made by the app) */
 function userSet(k,v){
   if(k==='weather'){ setWeather(v); return; }
+  if(k==='islands'&&v&&!S.islands){
+    if(S.follow) setVal('follow',false);
+    setVal('islandSeed',nextIslandSeed());
+  }
   if(k==='season'&&S.weather==='snow'&&v!==3){ setVal('season',v); setWeather('rain',true); toast('Too warm for snow – it turned to rain'); return; }
   setVal(k,v);
   if(WEATHER_KEYS.indexOf(k)>=0&&S.weather!=='custom'){ S.weather='custom'; apply('weather'); refresh('weather'); saveSoon(); }
@@ -320,6 +334,31 @@ addEventListener('resize',()=>{ moveChipInd(); moveTabInd(); });
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>{ moveChipInd(); moveTabInd(); });
 
 /* ---- actions ---- */
+function nextIslandSeed(){
+  let seed=Math.floor(Math.random()*4294967296);
+  if(seed===S.islandSeed) seed=(seed+1)>>>0;
+  return seed;
+}
+function toggleIslands(){
+  hideHint(); userSet('islands',!S.islands);
+  toast(S.islands?'Archipelago created · try Storm coast in settings':'Islands removed');
+}
+function newIslands(){
+  hideHint();
+  if(!S.islands) userSet('islands',true);
+  else { setVal('islandSeed',nextIslandSeed()); generateIslands(S.islandSeed); cliffEvents.length=0; resetCamera(); }
+  toast('A new archipelago');
+}
+function islandStorm(){
+  if(!S.islands) userSet('islands',true);
+  setWeather('storm',true); setPanel(false); hideHint();
+  toast('Storm coast · watch the cliffs');
+}
+(binders.islands=binders.islands||[]).push(v=>{
+  $('bIsland').classList.toggle('on',v);
+  $('bIsland').setAttribute('aria-pressed',v?'true':'false');
+  $('bIsland').title=v?'Remove islands (I)':'Generate islands (I)';
+});
 function dropBall(){
   hideHint(); replay($('bDrop'),'fired');
   if(launchMode==='throw') spawnAtPointer(innerWidth/2,innerHeight*0.42);
@@ -405,6 +444,7 @@ function setDock(show){
   if(show) setTimeout(moveChipInd,50);
 }
 $('bDrop').onclick=dropBall;
+$('bIsland').onclick=toggleIslands;
 $('bRain').onclick=ballRain;
 $('bClear').onclick=clearAll;
 $('bSlow').onclick=toggleSlow;
@@ -417,6 +457,7 @@ addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k===' '){ if(e.target&&e.target.closest&&e.target.closest('button,input')) return; e.preventDefault(); dropBall(); }
   else if(k==='escape') setPanel(false);
+  else if(k==='i') toggleIslands();
   else if(k==='r') ballRain();
   else if(k==='s') toggleSlow();
   else if(k==='c') clearAll();

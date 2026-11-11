@@ -44,7 +44,54 @@ function mist(x,y,z,vx,vy,vz,size,life){ emit(x,y,z,vx,vy,vz,size,life,P_MIST,2.
 let splashAmt=1;   /* user setting: splash detail */
 function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt*(hqMode?1.35:1); }
 
-const splashEvents=[];
+const splashEvents=[], cliffEvents=[];
+
+/* A breaker climbing a cliff: a wide sheet of aerated water, fast clear
+   droplets and a wind-blown mist cloud. A short secondary event below lets
+   the white water fall back down the rock instead of vanishing at the crest. */
+function cliffSplash(x,y,z,nx,nz,power){
+  const q=budget(), tx=-nz,tz=nx, width=3.4+2.2*power;
+  y=clamp(y,-0.3,2.0);
+  const n=Math.floor((650+450*power)*q);
+  for(let i=0;i<n;i++){
+    const along=(rnd()-0.5)*width, f=rnd(), core=1-Math.min(1,Math.abs(along)/(width*0.56));
+    const out=0.6+2.8*rnd(), up=(5.0+12.5*Math.pow(f,0.6))*(0.65+0.35*core)*(0.75+0.25*power);
+    emit(x+tx*along+nx*(rnd()-0.5)*0.35,y+0.12+rnd()*0.5,z+tz*along+nz*(rnd()-0.5)*0.35,
+      nx*out+tx*(rnd()-0.5)*2.2,up,nz*out+tz*(rnd()-0.5)*2.2,
+      (0.13+0.20*(1-f))*(0.8+0.4*rnd()),1.3+rnd()*1.2,0.82+0.18*rnd(),0.14+0.28*rnd(),1,1);
+  }
+  /* Fine spray fans outward and catches the light above the white water. */
+  for(let i=0;i<Math.floor(300*power*q);i++){
+    const along=(rnd()-0.5)*width, out=1.0+rnd()*4.0;
+    emit(x+tx*along,y+0.2+rnd()*0.6,z+tz*along,
+      nx*out+tx*(rnd()-0.5)*3,7.0+rnd()*12.0*power,nz*out+tz*(rnd()-0.5)*3,
+      0.04+0.075*rnd(),1.5+rnd()*1.2,0.2+0.65*rnd(),0.18+0.4*rnd(),1,1);
+  }
+  for(let i=0;i<Math.floor(36*power*q);i++){
+    const along=(rnd()-0.5)*width;
+    mist(x+tx*along+nx*rnd(),y+0.5+rnd()*2,z+tz*along+nz*rnd(),
+      nx*(0.5+rnd())+windX*0.15,1+rnd()*2.8,nz*(0.5+rnd())+windZ*0.15,
+      0.55+rnd()*0.8,1.8+rnd()*1.5);
+  }
+  addFoam(x+nx*0.7,z+nz*0.7,2.4,0.85);
+  addRing(x+nx*0.5,z+nz*0.5,2.1,0.6,0.08);
+  cliffEvents.push({x,y,z,nx,nz,tx,tz,width,power,start:simT+0.32,end:simT+1.5,acc:0});
+}
+function runCliffEvents(dt){
+  for(let i=cliffEvents.length-1;i>=0;i--){
+    const e=cliffEvents[i];
+    if(!islands.active||simT>e.end){cliffEvents.splice(i,1);continue;}
+    if(simT<e.start) continue;
+    e.acc+=dt*350*e.power*budget();
+    while(e.acc>=1){
+      e.acc--;
+      const along=(rnd()-0.5)*e.width, h=1.0+rnd()*(3.3+2.3*e.power), off=0.12+rnd()*0.6;
+      emit(e.x+e.tx*along+e.nx*off,e.y+h,e.z+e.tz*along+e.nz*off,
+        e.nx*(0.1+rnd()*0.7),-0.5-rnd()*2.5,e.nz*(0.1+rnd()*0.7),
+        0.10+rnd()*0.14,0.7+rnd()*0.8,0.9+0.1*rnd(),0.4,1,1);
+    }
+  }
+}
 
 /* ---- 1–4: water entry ---- */
 function splash(b,vImp,hx,hz){
@@ -207,6 +254,7 @@ function runSplashEvents(dt){
 function particlesStep(dt){
   if(dt<=0) return;
   runSplashEvents(dt);
+  runCliffEvents(dt);
   const wx=windX*0.3, wz=windZ*0.3, top=wv.reduce((s,w)=>s+w.A,0)+0.75;
   let sec=90;
   for(let i=pCount-1;i>=0;i--){
@@ -252,4 +300,4 @@ function packParticles(){
   }
   return o;
 }
-function clearSplashes(){ pCount=0; splashEvents.length=0; }
+function clearSplashes(){ pCount=0; splashEvents.length=0; cliffEvents.length=0; }

@@ -31,6 +31,35 @@ let simT=0, stepCount=0, windX=0, windZ=0;
 function capV(h,b){ let d=h-(b.y-b.r); if(d<=0)return 0; if(d>2*b.r)d=2*b.r; return Math.PI*d*d*(3*b.r-d)/3; }
 let grab=null;
 
+const groundNormal={nx:0,ny:1,nz:0};
+function collideIsland(b,dt){
+  const ground=islandGround(b.x,b.z,groundNormal);
+  if(ground<=-21.98) return;
+  const nx=groundNormal.nx,ny=groundNormal.ny,nz=groundNormal.nz;
+  /* Signed distance to the local tangent plane gives a stable contact on
+     sloping ground, rather than snapping the ball vertically into a cliff. */
+  const distance=(b.y-ground)*ny, pen=b.r-distance;
+  if(pen<=0) return;
+  const correction=Math.min(pen,b.r*2);
+  b.x+=nx*correction; b.y+=ny*correction; b.z+=nz*correction;
+  const vn=b.vx*nx+b.vy*ny+b.vz*nz;
+  if(vn<0){
+    if(b.type===6&&vn<-4.2){ waterBalloonBurst(b,-vn); b.dead=true; return; }
+    const restitution=Math.min(0.65,b.e*bounceMul*0.6);
+    const impulse=-(1+restitution)*vn;
+    b.vx+=nx*impulse; b.vy+=ny*impulse; b.vz+=nz*impulse;
+    if(vn<-2&&typeof audioKnock==='function') audioKnock(-vn*0.6);
+  }
+  const normalV=b.vx*nx+b.vy*ny+b.vz*nz;
+  const vx=b.vx-normalV*nx,vy=b.vy-normalV*ny,vz=b.vz-normalV*nz;
+  const friction=Math.min(1,dt*3.5);
+  b.vx-=vx*friction; b.vy-=vy*friction; b.vz-=vz*friction;
+  const roll=Math.min(1,dt*8)/b.r;
+  b.wx+=(ny*vz-nz*vy-b.wx*b.r)*roll;
+  b.wy+=(nz*vx-nx*vz-b.wy*b.r)*roll;
+  b.wz+=(nx*vy-ny*vx-b.wz*b.r)*roll;
+}
+
 function stepBall(b,dt){
   const r=b.r,t=simT,o=0.65*r;
   waveSample(b.x,b.z,t,true,S0);
@@ -46,8 +75,8 @@ function stepBall(b,dt){
 
   let ay=(-b.m*grav+RHO_W*waterRho*grav*Vs)/meff;
   let ax=RHO_W*Vs*S0.ax/meff, az=RHO_W*Vs*S0.az/meff;
-  const dist=Math.hypot(b.x,b.z);
-  if(dist>10){ const k=(dist-10)*0.9; ax-=b.x/dist*k; az-=b.z/dist*k; }
+  const dist=Math.hypot(b.x,b.z), playRadius=islands.active?80:10;
+  if(dist>playRadius){ const k=(dist-playRadius)*0.9; ax-=b.x/dist*k; az-=b.z/dist*k; }
   if(b.grab){ const g=b.grab; ax+=150*(g.x-b.x)-20*b.vx; ay+=150*(g.y-b.y)-20*b.vy; az+=150*(g.z-b.z)-20*b.vz; }
   b.vx+=ax*dt;b.vy+=ay*dt;b.vz+=az*dt;
 
@@ -112,12 +141,16 @@ function stepBall(b,dt){
   }
 
   b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;
+  if(islands.active) collideIsland(b,dt);
   /* orientation */
   const q=b.q,hx=0.5*dt;
   const dqx=b.wx*q[3]+b.wy*q[2]-b.wz*q[1], dqy=-b.wx*q[2]+b.wy*q[3]+b.wz*q[0],
         dqz=b.wx*q[1]-b.wy*q[0]+b.wz*q[3], dqw=-b.wx*q[0]-b.wy*q[1]-b.wz*q[2];
   q[0]+=dqx*hx;q[1]+=dqy*hx;q[2]+=dqz*hx;q[3]+=dqw*hx; qNorm(q);
-  if(!isFinite(b.x+b.y+b.z+b.vx+b.vy+b.vz)||dist>28||b.y<-24) b.dead=true;
+  /* Balls left on a distant island get time to drift back to the normal
+     play area when the archipelago is removed, rather than disappearing. */
+  if(!islands.active&&b.islandRecovery&&dist<28) b.islandRecovery=false;
+  if(!isFinite(b.x+b.y+b.z+b.vx+b.vy+b.vz)||dist>(islands.active||b.islandRecovery?140:28)||b.y<-24) b.dead=true;
 }
 
 function collide(){

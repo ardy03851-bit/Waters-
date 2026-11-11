@@ -5,7 +5,7 @@
    Everything is synthesised from filtered noise.  The context is only
    created after the user switches sound on (browsers require a gesture).
    ============================================================ */
-const audio={ctx:null,on:false,vol:0.7,master:null,noise:null,brown:null,sea:null,wind:null,rain:null,lastSplash:0,lastKnock:0,t:0};
+const audio={ctx:null,on:false,vol:0.7,master:null,noise:null,brown:null,sea:null,wind:null,rain:null,lastSplash:0,lastCliff:0,lastKnock:0,t:0};
 
 function audioNoiseBuffer(ctx,brown){
   const n=ctx.sampleRate*4, buf=ctx.createBuffer(1,n,ctx.sampleRate), d=buf.getChannelData(0);
@@ -84,6 +84,16 @@ function audioSplash(P,r){
   audioBurst(audio.noise,'bandpass',2600/size,700/size,0.8,0.55*k,0.006,0.35+0.5*k,0);          /* the slap and the spray */
   audioBurst(audio.brown,'lowpass',420/size,90,0.5,0.9*k,0.012,0.30+0.4*k,0.02);                 /* the deep "ploomp" of the cavity */
   if(P>2.5) audioBurst(audio.noise,'highpass',3500,5000,0.3,0.10*k,0.25,0.9,0.35);              /* drops raining back */
+}
+/* A low impact followed by the long hiss of water falling off the cliff.
+   Distance attenuation and a short rate limit keep overlapping breakers sane. */
+function audioCliff(power,x,z){
+  if(!audio.on||!audio.ctx) return;
+  const now=performance.now(); if(now-audio.lastCliff<650) return; audio.lastCliff=now;
+  const dist=Math.hypot(x-eye[0],z-eye[2]), k=clamp(power,0,1.2)/(1+dist*0.012);
+  audioBurst(audio.brown,'lowpass',360,65,0.5,0.8*k,0.035,1.35,0);
+  audioBurst(audio.noise,'bandpass',1800,550,0.5,0.38*k,0.06,1.0,0.03);
+  audioBurst(audio.noise,'highpass',2400,4200,0.3,0.12*k,0.25,1.4,0.22);
 }
 function audioKnock(strength){
   if(!audio.on||!audio.ctx) return;

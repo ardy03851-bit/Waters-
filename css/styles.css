@@ -186,6 +186,9 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border-radius:50%;bac
   50%{box-shadow:0 8px 34px 0 rgba(110,231,255,.9),inset 0 1px 0 rgba(255,255,255,.75),inset 0 -8px 14px rgba(20,60,200,.25)}}
 .btn.on{background:linear-gradient(135deg,rgba(110,231,255,.38),rgba(167,139,250,.34));border-color:rgba(160,235,255,.8);
   box-shadow:0 0 24px -2px rgba(110,231,255,.6),inset 0 1px 0 rgba(255,255,255,.5)}
+.island-btn:not(.on){border-color:rgba(149,231,196,.38);background:linear-gradient(150deg,rgba(103,189,158,.22),rgba(255,255,255,.05))}
+.island-btn .ic{color:#b9f4dc}
+.island-btn:focus-visible{outline:2px solid #b9f4dc;outline-offset:3px}
 /* click ripple */
 .rip{position:absolute;border-radius:50%;pointer-events:none;transform:scale(0);background:radial-gradient(circle,rgba(255,255,255,.55),rgba(255,255,255,.12) 55%,transparent 70%);animation:rip .7s var(--smooth) forwards}
 @keyframes rip{to{transform:scale(1);opacity:0}}
@@ -428,15 +431,16 @@ body.paused #slowBadge,body.paused #hint{opacity:0!important}
   #dock{gap:8px;padding:8px 12px 12px}
   .btn span{display:none}.btn.primary span{display:inline}
   .btn{min-height:46px;padding:0 12px}
-  #dock .acts{flex-wrap:nowrap;gap:6px}
-  #dock .btn{flex:1 1 0;min-width:0;padding:0 4px}
-  #dock .btn.primary{flex:0 0 auto;padding:0 14px}
-  #dock .btn.ghost{flex:1 1 0}
+  #dock .acts{flex-wrap:nowrap;gap:3px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+  #dock .acts::-webkit-scrollbar{display:none}
+  #dock .btn{flex:1 0 44px;min-width:44px;padding:0 4px}
+  #dock .btn.primary{flex:0 0 auto;min-width:44px;padding:0 14px}
+  #dock .btn.ghost{flex:1 0 44px}
   .p-btns .btn span{display:inline}
 }
-@media (max-width:400px){
+@media (max-width:460px){
   #dock .btn.primary span{display:none}
-  #dock .btn.primary{flex:1 1 0;padding:0 4px}
+  #dock .btn.primary{flex:1 0 44px;padding:0 4px}
 }
 @media (max-height:520px) and (orientation:landscape){
   #dock{gap:6px;padding:6px 12px 10px}
