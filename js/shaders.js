@@ -6,23 +6,54 @@ const HDR = '#version 300 es\nprecision highp float;\nprecision highp int;\nprec
 
 const COMMON = `
 uniform sampler2D uDetail;
-uniform float uTime,uStorm,uAmbLum,uSunLum,uCloudLo,uExp;
-uniform vec3 uSun,uSunCol,uZenith,uHorizon,uGlow;
+uniform float uTime,uStorm,uAmbLum,uSunLum,uCloudLo,uExp,uFogD,uNight,uRough,uRain;
+uniform vec3 uSun,uMoon,uLight,uSunCol,uZenith,uHorizon,uGlow,uFogCol,uSunDisc,uMoonDisc,uDeep,uTurq;
+uniform vec2 uCloudOff;
+uniform vec4 uBolt;
 float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
+/* uSun / uMoon are where the bodies are in the sky; uLight is whichever of them
+   is currently lighting the scene and uSunCol its colour.                       */
 vec3 skyCol(vec3 rd,float sunOn){
   float h=max(rd.y,0.0);
   vec3 c=mix(uHorizon,uZenith,pow(h,0.42));
   float sd=max(dot(rd,uSun),0.0);
+  float md=max(dot(rd,uMoon),0.0);
   c+=uGlow*(pow(sd,5.0)*0.30+pow(sd,48.0)*0.8);
+  c+=uMoonDisc*(pow(md,40.0)*0.010+pow(md,600.0)*0.05);
+  if(sunOn>0.5&&uNight>0.01){
+    /* stars */
+    vec2 sp=rd.xz/(rd.y+0.35)*46.0; vec2 ci=floor(sp); vec2 cf=fract(sp)-0.5;
+    float hs=hash12(ci);
+    vec2 so=(vec2(hash12(ci+7.3),hash12(ci+19.1))-0.5)*0.7;
+    float st=step(0.88,hs)*(1.0-smoothstep(0.02,0.07+0.08*hs,length(cf-so)));
+    float tw=0.72+0.28*sin(uTime*2.6+hs*50.0);
+    c+=mix(vec3(1.0,0.9,0.8),vec3(0.8,0.9,1.0),fract(hs*13.7))*st*tw*uNight*(0.25+(hs-0.88)*7.0)*smoothstep(0.0,0.22,rd.y);
+  }
   {
-    vec2 cuv=rd.xz/(h+0.10)*0.20+vec2(uTime*0.0035,uTime*0.0012);
-    float n=texture(uDetail,cuv).a*0.65+texture(uDetail,cuv*2.7+vec2(3.1,1.7)).a*0.35;
+    vec2 cuv=rd.xz/(h+0.10)*0.20+uCloudOff;
+    float n=texture(uDetail,cuv).a*0.65+texture(uDetail,cuv*2.7+vec2(3.1,1.7)+uCloudOff*0.7).a*0.35;
     float cov=smoothstep(uCloudLo,uCloudLo+0.24,n)*smoothstep(0.0,0.16,rd.y);
-    vec3 cc=mix(uHorizon,vec3(1.0),0.65)*(0.5+0.5*uAmbLum);
-    cc*=mix(1.0,0.42,uStorm);
-    cc+=uGlow*pow(sd,3.0)*0.45;
+    float al=min(uAmbLum*1.5,1.0);
+    vec3 cc=mix(uHorizon,vec3(al),0.65)*(0.25+0.75*al);
+    cc*=mix(1.0,0.42,uStorm)*mix(1.0,0.70+0.5*n,uStorm);
+    cc+=uGlow*pow(sd,3.0)*0.45+uMoonDisc*pow(md,6.0)*0.006;
+    cc+=vec3(0.70,0.78,1.0)*uBolt.z*0.55;
     c=mix(c,cc,cov*0.92);
-    c+=uSunCol*smoothstep(0.99965,0.99985,sd)*(1.0-cov)*step(0.5,sunOn)*step(0.0,rd.y);
+    float vis=(1.0-cov)*step(0.5,sunOn)*step(0.0,rd.y);
+    c+=uSunDisc*smoothstep(0.99965,0.99985,sd)*vis;
+    c+=uMoonDisc*smoothstep(0.99972,0.99986,md)*vis;
+  }
+  /* aerial perspective / fog: optical depth through a 150 m thick haze layer */
+  float fl=min(150.0/max(rd.y,0.004),40000.0);
+  c=mix(c,uFogCol,1.0-exp(-uFogD*fl));
+  if(sunOn>0.5&&uBolt.z>0.002&&rd.y>0.0){
+    /* lightning bolt: a jagged vertical channel at azimuth uBolt.x */
+    float da=atan(rd.x,-rd.z)-uBolt.x; da=mod(da+3.14159265,6.2831853)-3.14159265;
+    float jag=(texture(uDetail,vec2(rd.y*0.9,uBolt.y)).a-0.5)*0.24
+             +(texture(uDetail,vec2(rd.y*5.0,uBolt.y+0.37)).a-0.5)*0.05;
+    float dx=abs(da-jag);
+    float top=1.0-smoothstep(uBolt.w-0.06,uBolt.w,rd.y);
+    c+=exp(-uFogD*260.0)*vec3(0.85,0.90,1.0)*uBolt.z*top*((1.0-smoothstep(0.0012,0.0055,dx))*7.0+exp(-dx*26.0)*0.6);
   }
   return c;
 }
@@ -71,7 +102,11 @@ void main(){
   vFoam=1.0-smoothstep(0.40,0.72,J);
   vec2 ruv=pos.xz/(2.0*uRipR)+0.5;
   float ef=smoothstep(0.0,0.08,min(min(ruv.x,1.0-ruv.x),min(ruv.y,1.0-ruv.y)));
-  pos.y+=textureLod(uRip,ruv,0.0).r*ef;
+  float ro=clamp(sp*0.5,0.0,1.2)/(2.0*uRipR);
+  float rh=textureLod(uRip,ruv,0.0).r*2.0
+          +textureLod(uRip,ruv+vec2(ro,0.0),0.0).r+textureLod(uRip,ruv-vec2(ro,0.0),0.0).r
+          +textureLod(uRip,ruv+vec2(0.0,ro),0.0).r+textureLod(uRip,ruv-vec2(0.0,ro),0.0).r;
+  pos.y+=rh/6.0*ef;
   vWorld=pos;
   gl_Position=uVP*vec4(pos,1.0);
 }`;
@@ -106,8 +141,14 @@ void main(){
   vec3 d1=texture(uDetail,t1).xyz*2.0-1.0;
   vec3 d2=texture(uDetail,t2).xyz*2.0-1.0;
   vec3 d3=texture(uDetail,t3).xyz*2.0-1.0;
-  float dw=(0.40+0.55*uStorm)*df;
+  float dw=(0.40+0.55*uRough)*df;
   s+=(d1.xz*0.8+d2.xz*0.6+d3.xz*0.35)*dw;
+  if(uRain>0.01){
+    /* rain-pitted surface: fast, fine normal noise (the nearby rings come from the ripple sim) */
+    vec2 rn=texture(uDetail,vWorld.xz*2.9+vec2(uTime*0.83,-uTime*0.61)).xz
+           +texture(uDetail,vWorld.xz*4.7-vec2(uTime*0.57,uTime*0.91)).xz-1.0;
+    s+=rn*uRain*0.55*df;
+  }
   s*=mix(1.0,0.5,smoothstep(60.0,400.0,dist));
   vec3 N=normalize(vec3(s.x,1.0,s.y));
   float nv=max(dot(N,V),0.0);
@@ -122,11 +163,11 @@ void main(){
   refl=mix(refl,dec(rb.rgb),rb.a);
 
   /* body colour with sub-surface scattering at crests */
-  vec3 L=uSun;
+  vec3 L=uLight;
   float hh=clamp(vWorld.y/(uA0*2.0+0.35)*0.5+0.5,0.0,1.0);
   float back=pow(clamp(dot(L,-V)*0.5+0.5,0.0,1.0),3.0);
-  vec3 deep=vec3(0.005,0.040,0.078);
-  vec3 tq=vec3(0.03,0.36,0.31);
+  vec3 deep=uDeep;
+  vec3 tq=uTurq;
   vec3 body=deep*(0.25+0.9*uAmbLum)
            +tq*uSunCol*back*hh*hh*0.16*clamp(L.y*2.5,0.0,1.0)
            +tq*0.05*uAmbLum*pow(1.0-nv,2.0)*(0.4+hh)
@@ -144,7 +185,7 @@ void main(){
   else if(c1.a>0.5&&z1>zW){sc=c1;zS=z1;}
   if(sc.a>0.5){
     float thick=max(zS-zW,0.0)*dist/zW;
-    vec3 tr=exp(-thick*vec3(0.45,0.11,0.065)*(0.8+0.5*uStorm));
+    vec3 tr=exp(-thick*vec3(0.45,0.11,0.065)*(0.8+0.5*uRough));
     refr=dec(sc.rgb)*tr+body*(1.0-tr);
   }
 
@@ -153,7 +194,7 @@ void main(){
   /* sun glitter (GGX) */
   vec3 H=normalize(L+V);
   float nh=max(dot(N,H),0.0);
-  float a=0.035+0.07*uStorm+dist*0.00025; float a2=a*a;
+  float a=0.035+0.07*uRough+0.05*uRain+dist*0.00025; float a2=a*a;
   float dd=nh*nh*(a2-1.0)+1.0;
   float D=a2/(3.14159265*dd*dd);
   float vh=max(dot(V,H),0.0);
@@ -171,7 +212,7 @@ void main(){
   col=mix(col+spec*(1.0-fm),foamCol,fm*0.92);
 
   /* horizon haze */
-  float fog=smoothstep(100.0,580.0,dist);
+  float fog=max(smoothstep(100.0,580.0,dist),1.0-exp(-dist*uFogD));
   vec3 hd2=normalize(vec3(vWorld.x-uCam.x,0.02,vWorld.z-uCam.z));
   col=mix(col,skyCol(hd2,0.0),fog);
 
@@ -270,11 +311,11 @@ void main(){
   }
   vec3 V=normalize(uCamEff-vWorld);
   float nv=max(dot(N,V),0.0);
-  float ndl=max(dot(N,uSun),0.0);
+  float ndl=max(dot(N,uLight),0.0);
   vec3 hemi=mix(uHorizon*0.45+vec3(0.02,0.05,0.07),uZenith*1.3+vec3(0.05),N.y*0.5+0.5);
   vec3 diff=alb*(uSunCol*ndl*0.5+hemi*1.25);
   float shin=clamp(2.0/(rough*rough)-2.0,4.0,3000.0);
-  vec3 H=normalize(uSun+V); float nh=max(dot(N,H),0.0);
+  vec3 H=normalize(uLight+V); float nh=max(dot(N,H),0.0);
   float vh=max(dot(V,H),0.0);
   vec3 F0v=mix(vec3(f0),alb,metal);
   vec3 Fh=F0v+(1.0-F0v)*pow(1.0-vh,5.0);
@@ -286,6 +327,7 @@ void main(){
   vec3 Fr=F0v+(1.0-F0v)*pow(1.0-nv,5.0);
   float gloss=(1.0-rough); gloss*=gloss;
   vec3 col=diff*(1.0-metal)*(1.0-Fr*gloss*0.5)+env*Fr*gloss+spec*mix(vec3(1.0),alb,metal);
+  col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   if(uMode>0.5) o=vec4(enc(col),1.0);
   else o=vec4(tonemap(col),1.0);
 }`;
@@ -344,7 +386,7 @@ void main(){
     float d=dot(vQ,vQ); if(d>1.0) discard;
     float n=texture(uDetail,vQ*0.21+vec2(vSeed*7.31,vSeed*3.17)).a;
     float a=pow(1.0-d,1.6)*smoothstep(0.08,0.70,n+0.38*(1.0-d))*vA;
-    float fs=pow(max(dot(-V,uSun),0.0),6.0);
+    float fs=pow(max(dot(-V,uLight),0.0),6.0);
     vec3 c=vec3(0.93,0.96,1.0)*(0.40*uAmbLum+uSunLum*(0.15+0.45*fs));
     c=mix(c,c*uHorizon*1.4,0.18);
     o=vec4(tonemap(c)*a,a);
@@ -363,10 +405,10 @@ void main(){
   vec3 R=reflect(-V,N);
   vec3 T=normalize(-V-(vSide*n2.x+vAxis*n2.y)*1.35);
   vec3 clear=envC(T)*0.92*(1.0-F)+envC(R)*F;
-  float glint=pow(max(dot(R,uSun),0.0),160.0)*7.0+pow(max(dot(T,uSun),0.0),48.0)*2.2;
-  glint*=step(0.0,uSun.y);
+  float glint=pow(max(dot(R,uLight),0.0),160.0)*7.0+pow(max(dot(T,uLight),0.0),48.0)*2.2;
+  glint*=step(0.0,uLight.y);
   /* aerated water: diffuse white with soft volume shading */
-  float ndl=max(dot(N,uSun),0.0);
+  float ndl=max(dot(N,uLight),0.0);
   vec3 white=vec3(0.94,0.97,1.0)*(0.42*uAmbLum+0.25*uSunLum*(0.30+0.70*ndl));
   white=mix(white,white*uHorizon*1.4,0.12);
   vec3 col=mix(clear,white,wh);
@@ -377,6 +419,54 @@ void main(){
   float a=mix(aClear,aWhite,wh)*edge*vA/mix(1.0,vAsp,0.45);
   vec3 g=min(tonemap(uSunCol*glint),vec3(1.0))*edge*vA*(1.0-0.75*wh);
   o=vec4(tonemap(col)*a+g,a);
+}`;
+
+/* ---- Rain & snow: instanced, entirely procedural (no CPU work per drop).
+   Every instance gets a fixed random slot in a box that wraps around the camera. */
+const PRECIP_VS = HDR + `
+uniform mat4 uVP; uniform vec3 uCam,uCamR,uCamU,uBox,uOff,uVel;
+uniform float uSnow,uPxW,uLen,uT;
+out vec2 vQ; out float vA;
+void main(){
+  vec2 c=vec2(float(gl_VertexID&1),float(gl_VertexID>>1))*2.0-1.0;
+  float id=float(gl_InstanceID);
+  vec3 h=fract(sin(vec3(id*12.9898+1.0,id*78.233+2.0,id*37.719+3.0))*43758.5453);
+  vec3 p=h*uBox+uOff;
+  if(uSnow>0.5){ p.x+=sin(uT*(0.7+h.z*1.3)+id)*0.22; p.z+=cos(uT*(0.6+h.x*1.1)+id*1.7)*0.22; }
+  vec3 ctr=uCam+vec3(0.0,uBox.y*0.22,0.0);
+  p=ctr+mod(p-ctr,uBox)-uBox*0.5;
+  vec3 tc=uCam-p; float dist=length(tc); tc/=max(dist,1e-4);
+  float fade=smoothstep(0.25,1.2,dist)*(1.0-smoothstep(uBox.x*0.36,uBox.x*0.5,dist));
+  vec3 w;
+  if(uSnow>0.5){
+    float size=0.009+0.013*h.y, minS=dist*uPxW*0.9, a=0.9;
+    if(size<minS){ a*=max(size/minS,0.3); size=minS; }
+    w=p+(uCamR*c.x+uCamU*c.y)*size; vA=a*fade;
+  } else {
+    vec3 ax=normalize(uVel);
+    vec3 side=cross(ax,tc); float sl=length(side); side=sl>1e-3?side/sl:uCamR;
+    float wid=0.0028+0.002*h.y, minW=dist*uPxW*0.6, a=0.42+0.3*h.z;
+    if(wid<minW){ a*=max(wid/minW,0.2); wid=minW; }
+    w=p+side*(c.x*wid)+ax*(c.y*uLen*(0.7+0.6*h.y)*0.5); vA=a*fade;
+  }
+  vQ=c;
+  gl_Position=uVP*vec4(w,1.0);
+}`;
+const PRECIP_FS = HDR + COMMON + `
+in vec2 vQ; in float vA; out vec4 o;
+uniform float uSnow;
+void main(){
+  float a;
+  vec3 c;
+  if(uSnow>0.5){
+    float d=dot(vQ,vQ); if(d>1.0) discard;
+    a=(1.0-d*d)*vA;
+    c=vec3(0.95,0.97,1.0)*(0.62*uAmbLum+0.16*uSunLum);
+  } else {
+    a=(1.0-vQ.x*vQ.x)*(1.0-vQ.y*vQ.y*vQ.y*vQ.y)*vA;
+    c=mix(uHorizon,vec3(1.0),0.45)*(0.75*uAmbLum+0.12*uSunLum)+vec3(0.6,0.7,1.0)*uBolt.z;
+  }
+  o=vec4(tonemap(c)*a,a);
 }`;
 
 function compile(type,src){
@@ -397,4 +487,5 @@ const pWater=program(WATER_VS,WATER_FS);
 const pSky=program(SKY_VS,SKY_FS);
 const pBall=program(BALL_VS,BALL_FS);
 const pPart=program(PART_VS,PART_FS);
+const pPrecip=program(PRECIP_VS,PRECIP_FS);
 

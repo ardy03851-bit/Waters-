@@ -16,7 +16,8 @@
 
 <!-- cinematic overlays -->
 <div id="vig" aria-hidden="true"></div>
-<div id="slowBadge" class="glass" aria-hidden="true"><span class="rec"></span>Slow-mo <b>0.2×</b></div>
+<div id="slowBadge" class="glass" aria-hidden="true"><span class="rec"></span>Slow-mo <b id="slowVal">0.2×</b></div>
+<div id="pauseBadge" class="glass" aria-hidden="true"><span class="pbars"><i></i><i></i></span>Paused</div>
 
 <header id="top">
   <div class="brand glass">
@@ -36,9 +37,14 @@
     <div class="st"><span class="live"></span><b id="stFps">60</b><i>fps</i></div>
     <div class="st"><b id="stBalls">0</b><i>balls</i></div>
     <div class="st wide"><b id="stRes">1.00×</b><i>render</i></div>
-    <div class="st wide"><b id="stSea">38%</b><i>sea</i></div>
+    <div class="st wide"><b id="stSea">0.0 m</b><i>waves</i></div>
   </div>
 </header>
+
+<button id="cond" class="glass" title="Conditions – open sky &amp; weather settings">
+  <svg class="ic cond-ic" id="condIc" viewBox="0 0 24 24"></svg>
+  <b id="condTemp">24°</b><span id="condTxt">Partly cloudy</span><i id="condTime">14:30</i>
+</button>
 
 <div id="hint" class="glass">
   <span class="tap" aria-hidden="true"><i></i></span>
@@ -50,11 +56,7 @@
 <section id="dock" class="glass">
   <div class="grip" aria-hidden="true"></div>
   <div class="chips" id="chips"><span class="chip-ind" id="chipInd" aria-hidden="true"></span></div>
-  <div class="row">
-    <label class="ctl"><span class="lab">Ball size <b id="vSize">1.0×</b></span><input id="sSize" type="range" min="50" max="220" value="100"></label>
-    <label class="ctl"><span class="lab">Sea state <b id="vSea">Moderate</b></span><input id="sSea" type="range" min="0" max="100" value="38"></label>
-    <label class="ctl"><span class="lab">Sun <b id="vSun">Afternoon</b></span><input id="sSun" type="range" min="0" max="100" value="58"></label>
-  </div>
+  <div class="row" id="dockRow"></div>
   <div class="acts">
     <button class="btn primary" id="bDrop" title="Drop ball (Space)">
       <svg class="ic ic-drop" viewBox="0 0 24 24"><path d="M12 3c3.5 4.4 6 7.6 6 11a6 6 0 0 1-12 0c0-3.4 2.5-6.6 6-11z"/></svg><span>Drop ball</span>
@@ -68,6 +70,9 @@
     <button class="btn" id="bClear" title="Clear (C)">
       <svg class="ic ic-clear" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg><span>Clear</span>
     </button>
+    <button class="btn" id="bSet" title="Settings (G)">
+      <svg class="ic ic-set" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg><span>Settings</span>
+    </button>
     <button class="btn ghost" id="bHide" title="Hide controls (H)">
       <svg class="ic ic-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span>Hide</span>
     </button>
@@ -76,6 +81,16 @@
 <button id="fab" class="glass" title="Show controls (H)">
   <svg class="ic" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg><span>Controls</span>
 </button>
+
+<!-- settings -->
+<aside id="panel" class="glass" aria-hidden="true">
+  <div class="p-head">
+    <h2>Settings</h2>
+    <button class="icon-btn" id="pClose" title="Close (Esc)"><svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="tabs" id="tabs"><span class="tab-ind" id="tabInd" aria-hidden="true"></span></div>
+  <div class="p-body" id="pBody"></div>
+</aside>
 
 <!-- intro -->
 <div id="intro" aria-hidden="true">
@@ -93,11 +108,14 @@
 <!-- Plain scripts, loaded in order (no build step, works from any static host) -->
 <script src="js/core.js"></script>      <!-- WebGL context, math helpers -->
 <script src="js/shaders.js"></script>   <!-- GLSL: water, sky, balls, splash particles -->
-<script src="js/ocean.js"></script>     <!-- textures, geometry, waves, ripple sim, sky -->
-<script src="js/splash.js"></script>    <!-- splash VFX: crown, jet, mist, rain-back -->
-<script src="js/physics.js"></script>   <!-- rigid-body ball physics -->
-<script src="js/input.js"></script>     <!-- camera, pointer & touch input -->
-<script src="js/ui.js"></script>        <!-- glass UI behaviour -->
-<script src="js/render.js"></script>    <!-- render passes + main loop -->
+<script src="js/ocean.js"></script>       <!-- textures, geometry, waves, ripple sim -->
+<script src="js/environment.js"></script> <!-- season, time of day, weather, sky & light -->
+<script src="js/splash.js"></script>      <!-- splash VFX: crown, jet, mist, rain-back -->
+<script src="js/weather.js"></script>     <!-- rain & snow -->
+<script src="js/physics.js"></script>     <!-- rigid-body ball physics -->
+<script src="js/input.js"></script>       <!-- camera, pointer & touch input -->
+<script src="js/audio.js"></script>       <!-- procedural sound -->
+<script src="js/render.js"></script>      <!-- render passes + main loop -->
+<script src="js/ui.js"></script>          <!-- glass UI, settings, persistence -->
 </body>
 </html>

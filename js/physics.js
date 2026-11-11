@@ -11,7 +11,8 @@ const TYPES=[
   {name:'Steel',      sub:'sinks fast',           r:0.28, rho:7.8,   e:0.30, ic:0.4,   sw:'linear-gradient(135deg,#f4f7fb,#8f9aab 40%,#e9eef6 55%,#4c5666)'}
 ];
 let selType=0, sizeMul=1, timeScale=1;
-const balls=[]; const MAXBALLS=40;
+let grav=G, bounceMul=1, waterRho=1;   /* tweakable physics: gravity, restitution scale, water density (1 = sea water) */
+const balls=[]; let MAXBALLS=40;
 function qNorm(q){const l=Math.hypot(q[0],q[1],q[2],q[3])||1;q[0]/=l;q[1]/=l;q[2]/=l;q[3]/=l;}
 function spawnBall(x,y,z,ti,vx=0,vy=0,vz=0){
   const T=TYPES[ti], r=T.r*sizeMul, V=4/3*Math.PI*r*r*r, m=T.rho*RHO_W*V;
@@ -41,7 +42,7 @@ function stepBall(b,dt){
   const dAvg=clamp((S0.h+h1+h2+h3+h4)/5-(b.y-r),0,2*r);
   const meff=b.m+0.5*RHO_W*Vs;
 
-  let ay=(-b.m*G+RHO_W*G*Vs)/meff;
+  let ay=(-b.m*grav+RHO_W*waterRho*grav*Vs)/meff;
   let ax=RHO_W*Vs*S0.ax/meff, az=RHO_W*Vs*S0.az/meff;
   const dist=Math.hypot(b.x,b.z);
   if(dist>10){ const k=(dist-10)*0.9; ax-=b.x/dist*k; az-=b.z/dist*k; }
@@ -94,12 +95,13 @@ function stepBall(b,dt){
   const dpen=S0.h-(b.y-r);
   if(dpen>0&&dpen<2*r){
     const dy=b.y-S0.h, rho=Math.max(Math.sqrt(Math.max(r*r-dy*dy,0)),0.06);
-    addRipple(b.x,b.z,rho*1.25+0.12,b.vy*dt*0.17);
+    addRipple(b.x,b.z,rho*1.25+0.12,clamp(b.vy,-14,14)*dt*0.55);
     const ux=b.vx-S0.vx,uz=b.vz-S0.vz,sp=Math.hypot(ux,uz);
     if(sp>0.4){
       const dx=ux/sp,dz=uz/sp;
-      addRipple(b.x+dx*rho*0.9,b.z+dz*rho*0.9,rho*0.8+0.1,sp*dt*0.22);
-      addRipple(b.x-dx*rho*0.9,b.z-dz*rho*0.9,rho*0.8+0.1,-sp*dt*0.22);
+      const push=Math.min(sp,14)*dt*0.5;
+      addRipple(b.x+dx*rho*0.9,b.z+dz*rho*0.9,rho*0.8+0.1,push);
+      addRipple(b.x-dx*rho*0.9,b.z-dz*rho*0.9,rho*0.8+0.1,-push);
     }
     if(sp>1.4||Math.abs(b.vy)>2) addFoam(b.x,b.z,rho*1.4+0.1,Math.min(1,(sp+Math.abs(b.vy))*0.45)*dt*10);
     if(sp>2.6&&frac<0.95) wakeSpray(b,S0.h,rho,ux,uz,sp,dt);
@@ -127,8 +129,9 @@ function collide(){
     const vbx=b.vx-(b.wy*nz-b.wz*ny)*rb,vby=b.vy-(b.wz*nx-b.wx*nz)*rb,vbz=b.vz-(b.wx*ny-b.wy*nx)*rb;
     const rx=vbx-vax,ry=vby-vay,rz=vbz-vaz,rn=rx*nx+ry*ny+rz*nz;
     if(rn<0){
-      let e=Math.min(a.e,b.e); if(a.frac>0.5||b.frac>0.5) e*=0.35;
+      let e=Math.min(0.97,Math.min(a.e,b.e)*bounceMul); if(a.frac>0.5||b.frac>0.5) e*=0.35;
       const jn=-(1+e)*rn/tot;
+      if(-rn>0.6&&typeof audioKnock==='function') audioKnock(-rn);
       a.vx-=jn*nx*a.im;a.vy-=jn*ny*a.im;a.vz-=jn*nz*a.im;
       b.vx+=jn*nx*b.im;b.vy+=jn*ny*b.im;b.vz+=jn*nz*b.im;
       const tx=rx-rn*nx,ty=ry-rn*ny,tz=rz-rn*nz,tm=Math.hypot(tx,ty,tz);

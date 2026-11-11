@@ -41,7 +41,8 @@ function emit(x,y,z,vx,vy,vz,size,life,kind,drag,grav,gen){
 }
 function mist(x,y,z,vx,vy,vz,size,life){ emit(x,y,z,vx,vy,vz,size,life,P_MIST,2.6,0.10,1); }
 /* thin out new effects smoothly when the particle pool is filling up */
-function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1); }
+let splashAmt=1;   /* user setting: splash detail */
+function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt; }
 
 const splashEvents=[];
 
@@ -52,6 +53,7 @@ function splash(b,vImp,hx,hz){
   const dens=0.5+0.5*Math.min(1,Math.pow(rho,0.4));
   const P=Math.min(vImp,26)*dens;
   if(P<0.45) return;
+  if(typeof audioSplash==='function') audioSplash(P,r);
   const x=b.x,z=b.z,y=b.wh, sc=0.55+0.45*r/0.4, q=budget();
   const hs=Math.hypot(hx,hz), fx=hs>1e-3?hx/hs:0, fz=hs>1e-3?hz/hs:0, obl=Math.min(1,hs/(vImp+1e-3));
 
@@ -84,8 +86,8 @@ function splash(b,vImp,hx,hz){
     mist(x+Math.cos(a)*rr,y+0.05+0.2*rnd()*r,z+Math.sin(a)*rr, Math.cos(a)*vo+hx*0.15,P*(0.05+0.17*rnd()),Math.sin(a)*vo+hz*0.15, r*(0.32+0.5*rnd())*(0.7+0.04*P), 1.3+1.7*rnd());
   }
   /* cavity + rim, foam */
-  addRipple(x,z,r*1.35,-Math.min(0.06,0.005*P));
-  addRing(x,z,r*1.7,r*0.5,Math.min(0.04,0.0035*P));
+  addRipple(x,z,r*1.35,-Math.min(0.16,0.016*P));
+  addRing(x,z,r*1.7,r*0.5,Math.min(0.11,0.011*P));
   addFoam(x,z,r*1.9,Math.min(0.75,P*0.10));
   /* delayed parts */
   if(P>2.0) splashEvents.push({type:0,t:simT+0.15+0.26*Math.sqrt(r),x:x+hx*0.05,z:z+hz*0.05,r,P,ball:b,on:false,acc:0,V:0,D:0});
@@ -100,7 +102,7 @@ function breach(b,vUp){
     emit(b.x+ca*r*0.9,y+0.02,b.z+sa*r*0.9, ca*sp*0.45+b.vx*0.5,sp,sa*sp*0.45+b.vz*0.5, (0.055-0.04*f)*(0.6+r), 0.7+rnd()*0.8, clamp(1-f+0.2*rnd(),0,1), 0.3+0.5*f, 1, 0);
   }
   for(let i=0;i<Math.floor(6*q);i++){ const a=rnd()*6.2832; mist(b.x+Math.cos(a)*r,y+0.1,b.z+Math.sin(a)*r,b.vx*0.3,vUp*0.2*rnd(),b.vz*0.3,r*(0.3+0.4*rnd()),1+rnd()); }
-  addRing(b.x,b.z,r*1.3,r*0.5,Math.min(0.05,0.008*vUp));
+  addRing(b.x,b.z,r*1.3,r*0.5,Math.min(0.10,0.016*vUp));
   addFoam(b.x,b.z,r*1.6,Math.min(0.6,vUp*0.15));
 }
 
@@ -146,12 +148,12 @@ function runSplashEvents(dt){
           const a=rnd()*6.2832, ca=Math.cos(a), sa=Math.sin(a), f=rnd(), sp=e.P*(0.08+0.14*f);
           emit(b.x+ca*b.r,h+0.02,b.z+sa*b.r, ca*sp*0.8,sp*1.4,sa*sp*0.8, 0.02+0.04*(1-f), 0.6+0.6*rnd(), clamp(1-f,0,1), 0.4+0.6*f, 1, 1);
         }
-        addRing(e.x,e.z,b.r*1.3,b.r*0.5,Math.min(0.04,0.004*e.P));
+        addRing(e.x,e.z,b.r*1.3,b.r*0.5,Math.min(0.08,0.008*e.P));
         addFoam(e.x,e.z,b.r*1.5,0.3);
         splashEvents.splice(i,1); continue;
       }
       e.V=Math.min(10.5,0.62*e.P)*(0.85+0.3*rnd()); e.D=0.13+0.016*e.P;
-      addRipple(e.x,e.z,e.r*0.9,Math.min(0.05,0.005*e.P));
+      addRipple(e.x,e.z,e.r*0.9,Math.min(0.14,0.014*e.P));
       addFoam(e.x,e.z,e.r*1.2,0.35);
       const sc=0.55+0.45*e.r/0.4;
       /* the pinched-off drop that leads the jet */
@@ -179,7 +181,7 @@ function particlesStep(dt){
   let sec=90;
   for(let i=pCount-1;i>=0;i--){
     const kind=PKind[i], dr=Math.max(0,1-PDrag[i]*dt);
-    PLife[i]-=dt; PVY[i]-=G*PGrav[i]*dt;
+    PLife[i]-=dt; PVY[i]-=grav*PGrav[i]*dt;
     PVX[i]=wx+(PVX[i]-wx)*dr; PVZ[i]=wz+(PVZ[i]-wz)*dr; PVY[i]*=dr;
     PX[i]+=PVX[i]*dt;PY[i]+=PVY[i]*dt;PZ[i]+=PVZ[i]*dt;
     let dead=PLife[i]<=0;
@@ -187,7 +189,7 @@ function particlesStep(dt){
       dead=true;
       if(kind<1.5){
         const sz=PSize[i], v=-PVY[i], x=PX[i], z=PZ[i];
-        addRipple(x,z,0.17,-Math.min(0.004,0.0005*v*sz/0.03));
+        addRipple(x,z,0.17,-Math.min(0.012,0.0015*v*sz/0.03));
         if(sz>0.016) addFoam(x,z,0.17,0.03+0.07*kind);
         if(PGen[i]===0&&sz>0.026&&v>2.4&&sec>0&&rnd()<0.6){
           const n=1+(rnd()<0.5?1:0); sec-=n;
