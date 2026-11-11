@@ -42,7 +42,7 @@ function emit(x,y,z,vx,vy,vz,size,life,kind,drag,grav,gen){
 function mist(x,y,z,vx,vy,vz,size,life){ emit(x,y,z,vx,vy,vz,size,life,P_MIST,2.6,0.10,1); }
 /* thin out new effects smoothly when the particle pool is filling up */
 let splashAmt=1;   /* user setting: splash detail */
-function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt; }
+function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt*(hqMode?1.35:1); }
 
 const splashEvents=[];
 
@@ -92,6 +92,36 @@ function splash(b,vImp,hx,hz){
   /* delayed parts */
   if(P>2.0) splashEvents.push({type:0,t:simT+0.15+0.26*Math.sqrt(r),x:x+hx*0.05,z:z+hz*0.05,r,P,ball:b,on:false,acc:0,V:0,D:0});
   splashEvents.push({type:1,t:simT+0.12,end:simT+1.0+0.12*P,x,z,r,P,acc:0});
+}
+
+/* ---- water balloon popping: a shell of water released at once ---- */
+function waterBalloonBurst(b,vImp){
+  const q=budget(), P=Math.min(vImp,24);
+  const n=Math.floor(clamp(30+P*11,40,170)*q);
+  for(let i=0;i<n;i++){
+    /* roughly even sphere of droplets, biased slightly upwards */
+    const a=rnd()*6.2832, u=rnd()*2-1, s=Math.sqrt(Math.max(0,1-u*u)), sp=P*(0.30+0.55*rnd());
+    emit(b.x,b.y,b.z, Math.cos(a)*s*sp, u*sp*0.8+P*0.10, Math.sin(a)*s*sp,
+         0.011+0.020*rnd(), 0.6+rnd()*0.9, 0.15+0.75*rnd(), 0.35+0.5*rnd(), 1, 1);
+  }
+  /* the balloon's own momentum leaves a streak of spray behind it */
+  for(let k=0;k<Math.floor(14*q);k++){
+    const f=rnd();
+    emit(b.x-b.vx*0.02*f,b.y-b.vy*0.02*f,b.z-b.vz*0.02*f, b.vx*(0.2+0.5*f),Math.abs(b.vy)*(0.15+0.3*f)+1.2,b.vz*(0.2+0.5*f),
+         0.014+0.02*rnd(), 0.5+rnd()*0.7, 0.2+0.6*rnd(), 0.5, 1, 1);
+  }
+  for(let k=0;k<Math.floor(9*q);k++){
+    const a=rnd()*6.2832, rr=b.r*1.3*Math.sqrt(rnd());
+    mist(b.x+Math.cos(a)*rr,b.y+0.1,b.z+Math.sin(a)*rr, b.vx*0.25,P*0.08*rnd(),b.vz*0.25, b.r*(0.4+0.5*rnd()),0.8+rnd()*1.2);
+  }
+  if(typeof audioSplash==='function') audioSplash(P*1.2,b.r);
+  /* popped at the surface: leave a crater, rim and foam like any splash */
+  if(b.y-b.r<b.wh+0.4){
+    addRipple(b.x,b.z,b.r*1.5,-Math.min(0.15,0.014*P));
+    addRing(b.x,b.z,b.r*1.9,b.r*0.5,Math.min(0.10,0.010*P));
+    addFoam(b.x,b.z,b.r*2.1,Math.min(0.7,P*0.09));
+  }
+  Hooks.run('burst',b,P);
 }
 
 /* ---- ball bursting out of the water ---- */

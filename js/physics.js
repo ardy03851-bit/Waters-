@@ -8,7 +8,9 @@ const TYPES=[
   {name:'Tennis ball',sub:'floats · fuzzy',       r:0.30, rho:0.37,  e:0.72, ic:0.667, sw:'radial-gradient(circle at 35% 30%,#e8f56a,#b5d11c 55%,#5e7108)'},
   {name:'Wood',       sub:'half-submerged',       r:0.40, rho:0.62,  e:0.45, ic:0.4,   sw:'radial-gradient(circle at 35% 30%,#d9a45f,#9a6428 55%,#4a2a0c)'},
   {name:'Bowling',    sub:'sinks slowly',         r:0.32, rho:1.35,  e:0.22, ic:0.4,   sw:'radial-gradient(circle at 35% 30%,#7c4bd0,#2a0f78 55%,#05031c)'},
-  {name:'Steel',      sub:'sinks fast',           r:0.28, rho:7.8,   e:0.30, ic:0.4,   sw:'linear-gradient(135deg,#f4f7fb,#8f9aab 40%,#e9eef6 55%,#4c5666)'}
+  {name:'Steel',      sub:'sinks fast',           r:0.28, rho:7.8,   e:0.30, ic:0.4,   sw:'linear-gradient(135deg,#f4f7fb,#8f9aab 40%,#e9eef6 55%,#4c5666)'},
+  {name:'Water balloon',sub:'bursts on impact',   r:0.34, rho:0.36,  e:0.35, ic:0.5,   sw:'radial-gradient(circle at 35% 30%,#a5eef7,#2aa8c4 55%,#0a4a5e)'},
+  {name:'Glow orb',   sub:'shines at night',      r:0.30, rho:0.55,  e:0.50, ic:0.45,   sw:'radial-gradient(circle at 35% 30%,#cffcff,#1fd3e8 45%,#0b6f8a)'}
 ];
 let selType=0, sizeMul=1, timeScale=1;
 let grav=G, bounceMul=1, waterRho=1;   /* tweakable physics: gravity, restitution scale, water density (1 = sea water) */
@@ -80,6 +82,8 @@ function stepBall(b,dt){
   /* splash on entry */
   {
     const rvy=b.vy-S0.vy, rvx=b.vx-S0.vx, rvz=b.vz-S0.vz;
+    /* a water balloon hitting the surface fast pops instead of splashing */
+    if(b.type===6&&b.pf<0.003&&frac>=0.003&&rvy<-2.0){ waterBalloonBurst(b,-rvy); b.dead=true; return; }
     if(b.pf<0.003&&frac>=0.003&&rvy<-0.7) splash(b,-rvy+0.35*Math.hypot(rvx,rvz),rvx,rvz);
     /* breaching: a buoyant ball bursting back out drags a skirt of water with it */
     if(b.pf>=0.55&&frac<0.55&&rvy>1.3) breach(b,rvy);
@@ -132,6 +136,11 @@ function collide(){
       let e=Math.min(0.97,Math.min(a.e,b.e)*bounceMul); if(a.frac>0.5||b.frac>0.5) e*=0.35;
       const jn=-(1+e)*rn/tot;
       if(-rn>0.6&&typeof audioKnock==='function') audioKnock(-rn);
+      /* a water balloon popped by a hard collision with another ball */
+      if(-rn>4.2){
+        const wb=a.type===6?a:(b.type===6?b:null);
+        if(wb){ waterBalloonBurst(wb,-rn+1.5); wb.dead=true; if(grab&&grab.ball===wb) grab=null; return; }
+      }
       a.vx-=jn*nx*a.im;a.vy-=jn*ny*a.im;a.vz-=jn*nz*a.im;
       b.vx+=jn*nx*b.im;b.vy+=jn*ny*b.im;b.vz+=jn*nz*b.im;
       const tx=rx-rn*nx,ty=ry-rn*ny,tz=rz-rn*nz,tm=Math.hypot(tx,ty,tz);

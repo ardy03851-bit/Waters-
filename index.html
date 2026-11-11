@@ -18,6 +18,8 @@
 <div id="vig" aria-hidden="true"></div>
 <div id="slowBadge" class="glass" aria-hidden="true"><span class="rec"></span>Slow-mo <b id="slowVal">0.2×</b></div>
 <div id="pauseBadge" class="glass" aria-hidden="true"><span class="pbars"><i></i><i></i></span>Paused</div>
+<div id="recBadge" class="glass" aria-hidden="true"><span class="rec"></span>REC</div>
+<div id="cineHint" class="glass" aria-hidden="true">Press <b>V</b> or <b>Esc</b> to exit cinema mode</div>
 
 <header id="top">
   <div class="brand glass">
@@ -107,6 +109,7 @@
 
 <!-- Plain scripts, loaded in order (no build step, works from any static host) -->
 <script src="js/core.js"></script>      <!-- WebGL context, math helpers -->
+<script src="js/engine.js"></script>    <!-- extension layer: hooks + public API -->
 <script src="js/shaders.js"></script>   <!-- GLSL: water, sky, balls, splash particles -->
 <script src="js/ocean.js"></script>       <!-- textures, geometry, waves, ripple sim -->
 <script src="js/environment.js"></script> <!-- season, time of day, weather, sky & light -->

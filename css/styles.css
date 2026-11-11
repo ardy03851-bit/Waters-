@@ -237,6 +237,24 @@ body.slow #hint{opacity:0!important}
 .rec{width:9px;height:9px;border-radius:50%;background:#ff5d7a;box-shadow:0 0 10px #ff5d7a;animation:blink 1.2s ease-in-out infinite}
 @keyframes blink{50%{opacity:.25}}
 
+/* ---------- cinema mode: everything but the scene fades away ---------- */
+body.cinema #top,body.cinema #dock,body.cinema #fab,body.cinema #cond,
+body.cinema #hint,body.cinema #toasts,body.cinema #panel{opacity:0;pointer-events:none}
+body.cinema #slowBadge,body.cinema #pauseBadge,body.cinema #recBadge{top:max(16px,calc(var(--sat) + 8px))}
+#cineHint{--r:999px;position:fixed;left:0;right:0;margin:0 auto;width:max-content;bottom:26px;padding:8px 16px;
+  font-size:12px;font-weight:600;letter-spacing:.6px;z-index:4;pointer-events:none;
+  opacity:0;transform:translateY(12px);transition:opacity .5s,transform .5s}
+body.cinema #cineHint{opacity:1;transform:none}
+body.cinema:not(.cine-hint) #cineHint{opacity:0;transform:translateY(12px)}
+body.cinema #vig{opacity:.55}
+
+/* ---------- video recording badge ---------- */
+#recBadge{--r:999px;position:fixed;left:0;right:0;margin:0 auto;width:max-content;top:max(72px,calc(var(--sat) + 60px));padding:8px 16px 8px 12px;
+  font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;display:flex;align-items:center;gap:9px;z-index:4;pointer-events:none;
+  opacity:0;transform:translateY(-20px) scale(.85);transition:opacity .4s,transform .6s var(--spring)}
+body.recording #recBadge{opacity:1;transform:none}
+body.recording #slowBadge,body.recording #pauseBadge{top:max(120px,calc(var(--sat) + 108px))}
+
 /* ---------- intro ---------- */
 #intro{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   background:radial-gradient(ellipse at 50% 40%,#12436b,#06121c 70%);

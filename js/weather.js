@@ -28,7 +28,7 @@ function updatePrecip(sdt){
 }
 function drawPrecip(Hh){
   const p=envS.precip; if(p<0.004) return;
-  const snow=envS.snow, n=Math.floor(PRECIP_MAX*Math.pow(Math.min(1,p),1.15)*(snow?0.65:1)); if(n<1) return;
+  const snow=envS.snow, n=Math.min(PRECIP_MAX*1.5,Math.floor(PRECIP_MAX*Math.pow(Math.min(1,p),1.15)*(snow?0.65:1)*(hqMode?1.4:1))); if(n<1) return;
   gl.useProgram(pPrecip); setSky(pPrecip);
   gl.uniformMatrix4fv(L(pPrecip,'uVP'),false,VP);
   gl.uniform3fv(L(pPrecip,'uCam'),eye); gl.uniform3fv(L(pPrecip,'uCamR'),camR); gl.uniform3fv(L(pPrecip,'uCamU'),camU);

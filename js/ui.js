@@ -24,7 +24,7 @@ const DEFAULTS={
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
   fov:50, orbit:false, follow:false,
-  quality:'auto', splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true, stats:true, sound:false, volume:0.7
+  quality:'auto', hq:false, splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true, stats:true, sound:false, volume:0.7
 };
 /* weather = a consistent set of physical quantities */
 const WEATHERS={
@@ -45,7 +45,8 @@ const SCENES=[
   {name:'Foggy dawn',    grad:'linear-gradient(160deg,#9aa7b5,#d9cfc4 55%,#6f8191)', set:{season:0,weather:'fog',hour:'sunrise',dayCycle:0}},
   {name:'Thunderstorm',  grad:'linear-gradient(160deg,#20262f,#4d5866 55%,#11202b)', set:{season:1,weather:'storm',hour:17,dayCycle:0}},
   {name:'Winter snow',   grad:'linear-gradient(160deg,#aebccb,#eef3f8 55%,#5f7386)', set:{season:3,weather:'snow',hour:11,dayCycle:0}},
-  {name:'Starry night',  grad:'linear-gradient(160deg,#050a1e,#16224d 55%,#04101c)', set:{season:1,weather:'clear',hour:0.5,dayCycle:0}}
+  {name:'Starry night',  grad:'linear-gradient(160deg,#050a1e,#16224d 55%,#04101c)', set:{season:1,weather:'clear',hour:0.5,dayCycle:0}},
+  {name:'Rainbow shower',grad:'linear-gradient(160deg,#5b7fb5,#c9d6e4 55%,#e0a86b)', set:{season:1,weather:'partly',hour:5.2,dayCycle:0,cloud:0.34,precip:0.55,fog:0.08}}
 ];
 const pct=v=>Math.round(v*100)+'%';
 function fogLabel(v){ const m=20000*Math.pow(40/20000,clamp(v,0,1)); return m>=1000?(m/1000).toFixed(m>=10000?0:1)+' km':Math.round(m/5)*5+' m'; }
@@ -91,6 +92,7 @@ const CONTROLS=[
   {tab:'camera',t:'buttons',items:[['Reset view',()=>{resetCamera();toast('View reset');}]]},
 
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
+  {tab:'system',t:'toggle',k:'hq',label:'Improved graphics mode',sub:'Full-resolution reflections, denser spray and rain, finer water detail'},
   {tab:'system',t:'range',k:'splash',label:'Splash detail',min:0.3,max:1.5,step:0.05,fmt:pct},
   {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Camera blur and smeared fast-moving objects'},
   {tab:'system',t:'range',k:'blur',label:'Blur strength',min:0.2,max:2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
@@ -98,7 +100,8 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'stats',label:'Performance stats',sub:'Frame rate, balls, resolution'},
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
-  {tab:'system',t:'buttons',items:[['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]}
+  {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
+  {tab:'system',t:'note',text:'Shortcuts: Space drop · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema mode · O auto-orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
 const TABS=[['scene','Scene'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
@@ -153,6 +156,7 @@ function apply(k){
     case 'orbit': autoOrbit=v; break;
     case 'follow': followBall=v; break;
     case 'quality': setQuality(v); break;
+    case 'hq': hqMode=v; setQuality(quality); if(curW>0) makeTargets(curW,curH); break;
     case 'splash': splashAmt=v; break;
     case 'motionBlur': motionBlurOn=v; break;
     case 'blur': blurStrength=v; break;
@@ -185,6 +189,11 @@ function userSet(k,v){
 function applyScene(sc){
   const o=sc.set, st=sunTimes(o.season);
   setVal('season',o.season); setWeather(o.weather,true);
+  /* scenes may override individual weather ingredients (e.g. the rainbow
+     shower needs broken cloud + rain, which no preset provides) */
+  const ov=['cloud','precip','fog','lightning','wind'].filter(k=>o[k]!==undefined);
+  ov.forEach(k=>setVal(k,o[k]));
+  if(ov.length&&S.weather!=='custom'){ S.weather='custom'; apply('weather'); refresh('weather'); }
   setVal('hour',Math.round((o.hour==='sunset'?st.set-0.35:o.hour==='sunrise'?st.rise+0.3:o.hour)*20)/20);
   setVal('dayCycle',o.dayCycle);
   toast(sc.name);
@@ -338,6 +347,59 @@ function toggleFullscreen(){
   if(!req){ toast('Fullscreen is not supported on this device'); return; }
   try{ const r=req.call(e); if(r&&r.catch) r.catch(()=>toast('Fullscreen was blocked')); }catch(err){ toast('Fullscreen was blocked'); }
 }
+
+/* ---- cinema mode: the UI fades away and the scene takes the whole screen ---- */
+let cinema=false, cineHintT=0;
+function setCinema(on){
+  cinema=on;
+  document.body.classList.toggle('cinema',on);
+  setPanel(false); hideHint();
+  clearTimeout(cineHintT);
+  const d=document, e=d.documentElement,
+        req=e.requestFullscreen||e.webkitRequestFullscreen, exit=d.exitFullscreen||d.webkitExitFullscreen,
+        fsEl=()=>d.fullscreenElement||d.webkitFullscreenElement;
+  if(on){
+    document.body.classList.add('cine-hint');
+    cineHintT=setTimeout(()=>document.body.classList.remove('cine-hint'),4500);
+    if(req&&!fsEl()){ try{ const r=req.call(e); if(r&&r.catch) r.catch(()=>{}); }catch(err){} }
+  } else {
+    document.body.classList.remove('cine-hint');
+    if(exit&&fsEl()){ try{ exit.call(d); }catch(err){} }
+  }
+}
+/* leaving fullscreen (Esc) also ends cinema mode */
+['fullscreenchange','webkitfullscreenchange'].forEach(ev=>
+  document.addEventListener(ev,()=>{ if(cinema&&!(document.fullscreenElement||document.webkitFullscreenElement)) setCinema(false); }));
+
+/* ---- video recording: capture the canvas to a downloadable webm ---- */
+let mediaRec=null, recChunks=[];
+function toggleRecord(){
+  if(mediaRec&&mediaRec.state!=='inactive'){ mediaRec.stop(); return; }
+  if(!window.MediaRecorder||!canvas.captureStream){ toast('Recording is not supported in this browser'); return; }
+  let mime='video/webm;codecs=vp9';
+  if(!MediaRecorder.isTypeSupported(mime)) mime='video/webm';
+  const stream=canvas.captureStream(60);
+  try{ mediaRec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8000000}); }
+  catch(e){ try{ mediaRec=new MediaRecorder(stream); }catch(e2){ toast('Recording failed to start'); return; } }
+  recChunks=[];
+  mediaRec.ondataavailable=ev=>{ if(ev.data&&ev.data.size) recChunks.push(ev.data); };
+  mediaRec.onstop=()=>{
+    document.body.classList.remove('recording');
+    const btn=$('recBtn'); if(btn) btn.firstChild.textContent='Record video';
+    try{
+      const b=new Blob(recChunks,{type:'video/webm'});
+      const a=document.createElement('a'), u=URL.createObjectURL(b);
+      a.href=u; a.download='aqua-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.webm';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(u),4000);
+      toast('Recording saved');
+    }catch(e){ toast('Could not save the recording'); }
+  };
+  mediaRec.start(250);
+  document.body.classList.add('recording');
+  const btn=$('recBtn'); if(btn) btn.firstChild.textContent='Stop recording';
+  toast('Recording…');
+}
 function setDock(show){
   $('dock').classList.toggle('hidden',!show); $('fab').classList.toggle('show',!show);
   if(show) setTimeout(moveChipInd,50);
@@ -363,10 +425,12 @@ addEventListener('keydown',e=>{
   else if(k==='p') togglePause();
   else if(k==='m') userSet('sound',!S.sound);
   else if(k==='f') toggleFullscreen();
+  else if(k==='v') setCinema(!cinema);
   else if(k==='k') takeShot();
   else if(k==='t'){ userSet('launch',S.launch==='drop'?'throw':'drop'); toast(S.launch==='throw'?'Tap to throw':'Tap to drop'); }
   else if(k==='o'){ userSet('orbit',!S.orbit); toast(S.orbit?'Auto-orbit on':'Auto-orbit off'); }
   else if(k>='1'&&k<=String(TYPES.length)) selectType(+k-1);
+  if(cinema&&['r','c','h','g'].indexOf(k)>=0) setCinema(false);   /* actions that need the UI leave cinema */
 });
 
 /* ---- click ripples on buttons and chips ---- */

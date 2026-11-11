@@ -132,6 +132,7 @@ function updateEnv(dt,sdt){
 
 function setSky(p){
   gl.uniform1f(L(p,'uTime'),simT); gl.uniform1f(L(p,'uStorm'),sky.storm);
+  gl.uniform1f(L(p,'uHQ'),hqMode?1:0);
   gl.uniform1f(L(p,'uAmbLum'),sky.ambLum); gl.uniform1f(L(p,'uSunLum'),sky.sunLum);
   gl.uniform1f(L(p,'uCloudLo'),sky.cloudLo); gl.uniform1f(L(p,'uExp'),sky.exp);
   gl.uniform1f(L(p,'uFogD'),sky.fogD); gl.uniform1f(L(p,'uNight'),sky.night);

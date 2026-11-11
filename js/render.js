@@ -8,6 +8,8 @@ let pr=Math.min(maxPR,1.5), prCeil=maxPR, curW=0, curH=0;
 let quality='auto', paused=false;
 /* realism effects (set from the UI): camera + object motion blur, lens effects */
 let motionBlurOn=true, blurStrength=1, lensFxOn=true;
+/* enhanced graphics mode: full-res reflections, denser VFX, extra shader detail */
+let hqMode=false;
 /* previous frame's view-projection, for the motion-blur reprojection */
 const prevVPm=new Float32Array(16);
 let havePrev=false;
@@ -105,6 +107,7 @@ function render(){
   }
   drawPrecip(Hh);
   postPass();
+  Hooks.run('render');
 }
 
 /* post pass: camera motion blur (reprojection against last frame's camera),
@@ -158,8 +161,10 @@ function frame(now){
   const dt=Math.min(rdtMs/1000,0.05);
   ema=ema*0.94+Math.min(rdtMs,100)*0.06; frameN++; cool--; ceilTimer+=dt;
   if(quality==='auto'){
+    /* enhanced graphics keeps a much higher resolution floor before scaling down */
+    const floorPR=hqMode?0.9:0.65;
     if(cool<=0&&frameN>40){
-      if(ema>20.5&&pr>0.65){ prCeil=Math.max(0.7,pr-0.05); pr=Math.max(0.65,pr-0.12); cool=60; }
+      if(ema>20.5&&pr>floorPR+0.001){ prCeil=Math.max(floorPR+0.05,pr-0.05); pr=Math.max(floorPR,pr-0.12); cool=60; }
       else if(ema<17.6&&pr<prCeil-0.001){ pr=Math.min(prCeil,pr+0.06); cool=120; }
     }
     if(ceilTimer>25){ ceilTimer=0; prCeil=Math.min(maxPR,prCeil+0.1); }
@@ -177,6 +182,7 @@ function frame(now){
   particlesStep(sdt);
   updatePrecip(sdt);
   uploadRipple();
+  Hooks.run('frame',dt,sdt);
   render();
   if(typeof audioFrame==='function') audioFrame(dt);
 

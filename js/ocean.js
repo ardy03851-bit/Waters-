@@ -245,7 +245,8 @@ function makeTargets(w,h){
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,scene.color,0);
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,scene.depth,0);
   if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Scene FBO incomplete');
-  rW=Math.max(2,w>>1); rH=Math.max(2,h>>1);
+  /* enhanced graphics: render ball reflections at full resolution instead of half */
+  if(hqMode){ rW=Math.max(2,w); rH=Math.max(2,h); } else { rW=Math.max(2,w>>1); rH=Math.max(2,h>>1); }
   refl={fb:gl.createFramebuffer(),color:gl.createTexture(),depth:gl.createRenderbuffer()};
   gl.bindTexture(gl.TEXTURE_2D,refl.color);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,rW,rH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);

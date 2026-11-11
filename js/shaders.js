@@ -42,6 +42,24 @@ vec3 skyCol(vec3 rd,float sunOn){
     float vis=(1.0-cov)*step(0.5,sunOn)*step(0.0,rd.y);
     c+=uSunDisc*smoothstep(0.99965,0.99985,sd)*vis;
     c+=uMoonDisc*smoothstep(0.99972,0.99986,md)*vis;
+    /* rainbow: rain in the air with the sun low but up – two bows around the
+       point opposite the sun (primary ~42°, secondary ~51°, fainter and reversed).
+       Only in the gaps between clouds – a rainbow needs direct sunlight. */
+    float rbm=uRain*(1.0-cov*0.92)*smoothstep(0.02,0.09,uSun.y)*(1.0-smoothstep(0.38,0.65,uSun.y));
+    if(rbm>0.004&&rd.y>-0.04){
+      vec3 anti=normalize(vec3(-uSun.x,-uSun.y,-uSun.z));
+      float ca=dot(rd,anti);
+      float t1=(ca-0.740)/(0.768-0.740);
+      if(t1>0.0&&t1<1.0){
+        vec3 rc=mix(vec3(0.95,0.28,0.08),vec3(0.20,0.30,0.85),t1);
+        c+=rc*rbm*0.55*smoothstep(0.0,0.25,t1)*smoothstep(1.0,0.75,t1);
+      }
+      float t2=(ca-0.600)/(0.655-0.600);
+      if(t2>0.0&&t2<1.0){
+        vec3 rc=mix(vec3(0.20,0.30,0.85),vec3(0.95,0.28,0.08),t2);
+        c+=rc*rbm*0.18*smoothstep(0.0,0.3,t2)*smoothstep(1.0,0.7,t2);
+      }
+    }
   }
   /* aerial perspective / fog: optical depth through a 150 m thick haze layer */
   float fl=min(150.0/max(rd.y,0.004),40000.0);
@@ -118,6 +136,7 @@ out vec4 o;
 uniform vec3 uCam,uCamR,uCamF;
 uniform float uRipR,uRipN,uA0;
 uniform vec2 uRes,uNF;
+uniform float uHQ;
 uniform sampler2D uRip,uScene,uSceneD,uRefl;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 void main(){
@@ -143,6 +162,12 @@ void main(){
   vec3 d3=texture(uDetail,t3).xyz*2.0-1.0;
   float dw=(0.40+0.55*uRough)*df;
   s+=(d1.xz*0.8+d2.xz*0.6+d3.xz*0.35)*dw;
+  /* enhanced graphics: two more capillary octaves close to the camera */
+  if(uHQ>0.5){
+    vec2 t4=vWorld.xz*4.1+vec2(-uTime*0.06,uTime*0.09);
+    vec2 t5=vWorld.xz*7.9+vec2(uTime*0.13,-uTime*0.04);
+    s+=(texture(uDetail,t4).xz*0.22+texture(uDetail,t5).xz*0.12)*dw;
+  }
   if(uRain>0.01){
     /* rain-pitted surface: fast, fine normal noise (the nearby rings come from the ripple sim) */
     vec2 rn=texture(uDetail,vWorld.xz*2.9+vec2(uTime*0.83,-uTime*0.61)).xz
@@ -320,6 +345,16 @@ void main(){
     float hole=max(max(smoothstep(0.9935,0.9945,dot(l,d0)),smoothstep(0.9965,0.9975,dot(l,d1))),smoothstep(0.9965,0.9975,dot(l,d2)));
     alb=mix(alb,vec3(0.0),hole);
     rough=0.09;
+  } else if(t==6){
+    /* water balloon: thin rubber skin, water sloshing inside */
+    float inner=smoothstep(0.30,0.95,length(l-vec3(0.0,-0.15,0.0)));
+    alb=mix(vec3(0.05,0.32,0.40),vec3(0.02,0.10,0.16),inner);
+    alb*=0.85+0.3*texture(uDetail,l.xy*3.0).a;
+    rough=0.16; f0=0.06;
+  } else if(t==7){
+    /* glow orb: faint shell, mostly emissive (see below) */
+    alb=vec3(0.01,0.05,0.06);
+    rough=0.25; f0=0.05;
   } else {
     alb=vec3(0.86,0.89,0.94); metal=1.0; rough=0.05; f0=0.9;
   }
@@ -345,6 +380,12 @@ void main(){
   vec3 Fr=F0v+(1.0-F0v)*pow(1.0-nv,5.0);
   float gloss=(1.0-rough); gloss*=gloss;
   vec3 col=diff*(1.0-metal)*(1.0-Fr*gloss*0.5)+env*Fr*gloss+spec*mix(vec3(1.0),alb,metal);
+  /* glow orb: its own light, strongest when the surroundings are dark */
+  if(t==7){
+    float pulse=0.75+0.25*sin(uTime*2.2+l.x*2.0+l.z*1.5);
+    vec3 gc=mix(vec3(0.00,0.85,1.00),vec3(0.15,0.30,1.00),0.5+0.5*l.y);
+    col+=gc*(0.5+2.6*(1.0-uAmbLum))*pulse;
+  }
   col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   if(uMode>0.5) o=vec4(enc(col),1.0);
   else o=vec4(tonemap(col),1.0);
@@ -391,6 +432,7 @@ const PART_FS = HDR + COMMON + `
 in vec2 vQ; in float vAsp; in float vA; in float vKind; in float vSeed;
 in vec3 vSide; in vec3 vAxis; in vec3 vFwd;
 out vec4 o;
+uniform float uHQ;
 vec3 envC(vec3 d){
   vec3 s=mix(uHorizon,uZenith,pow(max(d.y,0.0),0.42));
   s+=uGlow*pow(max(dot(d,uSun),0.0),8.0)*0.4;
@@ -410,14 +452,20 @@ void main(){
     o=vec4(tonemap(c)*a,a);
     return;
   }
-  /* capsule-shaped drop: a sphere smeared along its motion (shutter blur) */
+  /* capsule-shaped drop: a sphere smeared along its motion (shutter blur).
+     The silhouette is then broken up with noise – surface tension keeps a
+     small clear drop round, but aerated water tears into ragged blobs that
+     wobble and reform as they fly. */
   vec2 p=vec2(vQ.x,vQ.y*vAsp);
   float ty=max(abs(p.y)-(vAsp-1.0),0.0)*sign(p.y);
   vec2 n2=vec2(p.x,ty); float d=dot(n2,n2);
-  if(d>1.0) discard;
+  float wh=clamp(vKind,0.0,1.0);
+  float wob=texture(uDetail,n2*0.19+vec2(vSeed*13.1,vSeed*4.7)+vec2(uTime*0.45,-uTime*0.32)).a-0.5;
+  float wob2=texture(uDetail,n2*0.53+vec2(vSeed*7.7,vSeed*17.3)+vec2(-uTime*0.7,uTime*0.5)).a-0.5;
+  float de=d+wob*(0.10+0.30*wh)+wob2*0.10*wh;
+  if(de>1.0) discard;
   float nz=sqrt(1.0-d);
   vec3 N=normalize(vSide*n2.x+vAxis*n2.y+V*nz);
-  float wh=clamp(vKind,0.0,1.0);
   /* clear water: inverted refracted image of the surroundings + fresnel reflection */
   float F=0.03+0.97*pow(1.0-nz,4.0);
   vec3 R=reflect(-V,N);
@@ -432,8 +480,9 @@ void main(){
   vec3 col=mix(clear,white,wh);
   float aClear=mix(0.42,0.95,pow(1.0-nz,1.5));
   float fr=texture(uDetail,n2*0.16+vec2(vSeed*5.7,vSeed*9.1)+vec2(0.0,p.y*0.05)).a;
-  float aWhite=(1.0-smoothstep(0.25,1.0,d))*smoothstep(0.12,0.62,fr+0.55*(1.0-d))*0.95;
-  float edge=1.0-smoothstep(0.80,1.0,d);
+  if(uHQ>0.5) fr=fr*0.6+texture(uDetail,n2*0.55+vec2(vSeed*3.3,vSeed*8.8)).a*0.4;
+  float aWhite=(1.0-smoothstep(0.25,1.0,de))*smoothstep(0.12,0.62,fr+0.55*(1.0-de))*0.95;
+  float edge=1.0-smoothstep(0.80,1.0,de);
   float a=mix(aClear,aWhite,wh)*edge*vA/mix(1.0,vAsp,0.45);
   vec3 g=min(tonemap(uSunCol*glint),vec3(1.0))*edge*vA*(1.0-0.75*wh);
   o=vec4(tonemap(col)*a+g,a);
