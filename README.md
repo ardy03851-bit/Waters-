@@ -10,19 +10,20 @@ Open `http://localhost:8000` in a WebGL 2 capable browser.
 
 ## Island archipelago
 
-Select **Islands** in the dock (or press **I**) to generate an archipelago; select it again to return to the open ocean. The camera pulls back to frame the islands, and the usual orbit, zoom and ball controls remain available. Balls can land and roll on the terrain. Boulders and grasses are decorative and do not create separate collision surfaces.
+Select **Islands** in the dock (or press **I**) to generate an archipelago; select it again to return to the open ocean. The camera pulls back to frame the islands, and the usual orbit, zoom and ball controls remain available. Balls can land and roll on the terrain. Boulders, plants, rock formations and cascades are decorative and do not create separate collision surfaces.
 
 **Settings → Islands** has controls for:
 
-- Wild, Coves or Highlands terrain, three to five islands, mountain height, coastline detail and beach size.
-- Forest density and tree height, grasses, boulders and seabirds.
+- **Temperate**, **Tropical**, **Volcanic**, **Alpine**, **Desert** or **Mixed** biomes. Tropical coasts grow palms; volcanic islands have dark basalt and crater-like high ground; alpine slopes hold snow; desert islands have sandstone mesas and cacti. Mixed mode assigns different biomes to each island from the seed.
+- Wild, Coves or Highlands coast types, three to five islands, mountain height, coastline detail, beaches and landform detail.
+- Tree and cactus density, tree height, grasses, boulders, wildflowers, rock formations, cascades and seabirds. Cascades appear on suitable downhill slopes in the wetter biomes.
 - Vegetation wind response and cliff-surf intensity.
 
-**New islands** chooses a new seed; **Storm coast** brings in a thunderstorm. The seed and island settings are saved with the other settings, so the same seed and controls recreate the same layout and planting. Terrain controls rebuild the current coast, while vegetation and rock controls update only those detail layers. Trees and grass bend in wind-driven gusts, rain darkens foliage, winter adds snow, and seabirds shelter during heavy storms and at night.
+New installs start with Mixed biomes; settings saved before biomes were added retain their temperate ecology. **New islands** chooses a new seed; **Storm coast** brings in a thunderstorm. The seed and island settings are saved with the other settings, so the same seed and controls recreate the same layout and planting. Terrain controls rebuild the current coast, while vegetation and scenery controls update only those detail layers. Pines, palms and grass bend in wind-driven gusts, rain darkens foliage, winter adds snow, and seabirds shelter during heavy storms and at night.
 
 Storm swells hitting exposed cliffs throw up curling water sheets, fine spray, mist and a fading foam wash. Wind can also tear streaks of spindrift off open-water crests. Water entries include a crown, a jet and, for angled impacts, a directional fan of water. Enable **Sound** in System settings to hear the impacts.
 
-The coastal surface and tree textures in `assets/` are local; no external texture service is required at runtime. Trees, rocks, grasses and birds use seeded instancing to keep their populations bounded.
+The coastal surface and tree textures in `assets/` are local; no external texture service is required at runtime. Extra palm, basalt and sandstone textures load only when their biomes are used, and low-memory mode limits their upload size. Trees, rocks, grasses, flowers, formations and birds use seeded instancing to keep their populations bounded.
 
 ## Rendering controls
 

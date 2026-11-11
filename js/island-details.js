@@ -48,7 +48,8 @@ function makeIslandDetails(random,options){
   const birdRnd=islandRandom((random()*4294967296)>>>0);
   const rocks=[],grass=[],birds=[],normal={nx:0,ny:1,nz:0};
   for(const I of islands.land){
-    const rockTarget=Math.round((I.rx+I.rz)*1.55*options.rocks);
+    const biome=ISLAND_BIOMES[I.biome];
+    const rockTarget=Math.round((I.rx+I.rz)*1.55*options.rocks*biome.rocks);
     let added=0;
     for(let attempt=0;attempt<rockTarget*12&&added<rockTarget;attempt++){
       const p=islandDetailPoint(I,rockRnd); if(!p) continue;
@@ -58,10 +59,10 @@ function makeIslandDetails(random,options){
       const patch=islandNoise(p[0]*0.16,p[1]*0.16,I.seed+707);
       if(rockRnd()>0.24+0.63*patch) continue;
       const size=(0.20+0.86*Math.pow(rockRnd(),2.0))*(0.82+0.36*rockRnd());
-      rocks.push(p[0],y-size*0.42,p[1],size,0.65+0.7*rockRnd(),0.48+0.48*rockRnd(),rockRnd()*Math.PI*2,rockRnd());
+      rocks.push(p[0],y-size*0.42,p[1],size,0.65+0.7*rockRnd(),0.48+0.48*rockRnd(),rockRnd()*Math.PI*2,biome.id+rockRnd()*0.999);
       added++;
     }
-    const grassTarget=Math.round(I.rx*I.rz*2.5*options.grass);
+    const grassTarget=Math.round(I.rx*I.rz*2.5*options.grass*biome.grass);
     added=0;
     for(let attempt=0;attempt<grassTarget*10&&added<grassTarget;attempt++){
       const p=islandDetailPoint(I,grassRnd); if(!p) continue;
@@ -69,7 +70,7 @@ function makeIslandDetails(random,options){
       if(y<1.3||normal.ny<0.76) continue;
       const patch=islandNoise(p[0]*0.18+8,p[1]*0.18-5,I.seed+117);
       if(grassRnd()>0.2+0.8*sstep(0.31,0.65,patch)) continue;
-      grass.push(p[0],y-0.035,p[1],0.30+0.42*grassRnd(),grassRnd(),grassRnd(),grassRnd(),grassRnd());
+      grass.push(p[0],y-0.035,p[1],0.30+0.42*grassRnd(),grassRnd(),grassRnd(),grassRnd(),biome.id+grassRnd()*0.999);
       added++;
     }
     /* Small flocks circle individual islands instead of attaching to the camera. */
@@ -91,34 +92,36 @@ function disposeIslandDetails(){
   islands.details=null;
 }
 
-function rebuildIslandDetails(options){
+function rebuildIslandDetails(options,skipScenery=false){
   if(!islands.active) return;
   disposeIslandDetails();
   makeIslandDetails(islandRandom(islands.seed^0x19b6af42),options);
+  if(!skipScenery&&typeof rebuildIslandScenery==='function') rebuildIslandScenery(options);
 }
 
 const ROCK_VS=HDR+`
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec4 aRock; layout(location=2) in vec4 aInfo;
 uniform mat4 uVP; uniform float uMirror;
-out vec3 vWorld; out vec3 vN; out float vSeed;
+out vec3 vWorld; out vec3 vN; out float vSeed; flat out float vBiome;
 void main(){
-  float rough=1.0+0.18*sin(dot(aPos,vec3(8.1,5.7,9.4))+aInfo.w*19.0)
-                 +0.11*sin(dot(aPos,vec3(13.0,-8.0,4.0))+aInfo.w*37.0);
+  float seed=fract(aInfo.w); vBiome=floor(aInfo.w);
+  float rough=1.0+0.18*sin(dot(aPos,vec3(8.1,5.7,9.4))+seed*19.0)
+                 +0.11*sin(dot(aPos,vec3(13.0,-8.0,4.0))+seed*37.0);
   vec3 scale=vec3(aRock.w*aInfo.x,aRock.w*aInfo.y,aRock.w);
   vec3 p=aPos*scale*rough;
   float c=cos(aInfo.z),s=sin(aInfo.z);
   vec3 q=vec3(c*p.x-s*p.z,p.y,s*p.x+c*p.z);
   vec3 n=normalize(aPos/scale);
   vN=normalize(vec3(c*n.x-s*n.z,n.y,s*n.x+c*n.z));
-  vWorld=aRock.xyz+q; vSeed=aInfo.w;
+  vWorld=aRock.xyz+q; vSeed=seed;
   if(uMirror>0.5) q.y=-vWorld.y; else q.y=vWorld.y;
   q.xz=vWorld.xz;
   gl_Position=uVP*vec4(q,1.0);
 }`;
 const ROCK_FS=HDR+COMMON+`
-in vec3 vWorld; in vec3 vN; in float vSeed; out vec4 o;
-uniform sampler2D uRock; uniform vec3 uCamEff; uniform float uMode,uMirror,uSnowCover;
+in vec3 vWorld; in vec3 vN; in float vSeed; flat in float vBiome; out vec4 o;
+uniform sampler2D uRock,uBasalt,uSandstone; uniform vec3 uCamEff; uniform float uMode,uMirror,uSnowCover;
 void main(){
   /* Derivatives must be evaluated before the reflection clip/discard. */
   vec3 faceCross=cross(dFdx(vWorld),dFdy(vWorld));
@@ -128,11 +131,18 @@ void main(){
   vec3 N=normalize(mix(smoothN,faceN,0.70)), V=normalize(uCamEff-vWorld);
   vec3 weights=pow(abs(N),vec3(3.0)); weights/=max(weights.x+weights.y+weights.z,0.001);
   vec3 p=vWorld*0.35+vSeed*3.0;
-  vec3 tex=texture(uRock,p.zy).rgb*weights.x+texture(uRock,p.xz).rgb*weights.y+texture(uRock,p.xy).rgb*weights.z;
+  vec3 tex;
+  if(vBiome>1.5&&vBiome<2.5)
+    tex=texture(uBasalt,p.zy).rgb*weights.x+texture(uBasalt,p.xz).rgb*weights.y+texture(uBasalt,p.xy).rgb*weights.z;
+  else if(vBiome>3.5)
+    tex=texture(uSandstone,p.zy).rgb*weights.x+texture(uSandstone,p.xz).rgb*weights.y+texture(uSandstone,p.xy).rgb*weights.z;
+  else tex=texture(uRock,p.zy).rgb*weights.x+texture(uRock,p.xz).rgb*weights.y+texture(uRock,p.xy).rgb*weights.z;
   vec3 alb=pow(tex,vec3(1.8))*(0.68+0.22*vSeed);
+  if(vBiome>1.5&&vBiome<2.5) alb+=vec3(0.012);
+  if(vBiome>2.5&&vBiome<3.5) alb*=vec3(0.86,0.94,1.04);
   float wet=max(1.0-smoothstep(0.3,1.5,vWorld.y),uRain*0.38);
   alb*=1.0-0.38*wet;
-  float snow=uSnowCover*smoothstep(3.0,9.0,vWorld.y)*smoothstep(0.4,0.85,N.y)*0.65;
+  float snow=max(uSnowCover,(vBiome>2.5&&vBiome<3.5)?0.8:0.0)*smoothstep(5.0,11.0,vWorld.y)*smoothstep(0.4,0.85,N.y)*0.65;
   alb=mix(alb,vec3(0.64,0.70,0.72),snow);
   float nl=max(dot(N,uLight),0.0);
   vec3 col=alb*(uZenith*0.38+uHorizon*0.20+vec3(0.24*uAmbLum)+uSunCol*nl*0.5);
@@ -144,7 +154,7 @@ void main(){
 const GRASS_VS=HDR+`
 layout(location=0) in vec4 aPlant; layout(location=1) in vec4 aInfo;
 uniform mat4 uVP; uniform float uMirror,uTime,uWindStrength; uniform vec2 uWindDir;
-out vec3 vWorld; out float vHeight; out float vTint;
+out vec3 vWorld; out float vHeight; out float vTint; flat out float vBiome;
 void main(){
   int blade=gl_VertexID/3, corner=gl_VertexID%3;
   float angle=aInfo.x*6.2831853+float(blade)*2.0943951;
@@ -155,16 +165,20 @@ void main(){
   float gust=0.75+0.25*sin(uTime*1.1-dot(aPlant.xz,uWindDir)*0.25+aInfo.z*8.0);
   vec2 bend=uWindDir*top*h*(0.10+0.45*gust)*clamp(uWindStrength,0.0,1.5);
   vec3 p=aPlant.xyz+vec3(side.x*edge*h*0.16+bend.x,top*h,side.y*edge*h*0.16+bend.y);
-  vWorld=p; vHeight=top; vTint=aInfo.w;
+  vWorld=p; vHeight=top; vTint=fract(aInfo.w); vBiome=floor(aInfo.w);
   if(uMirror>0.5) p.y=-p.y;
   gl_Position=uVP*vec4(p,1.0);
 }`;
 const GRASS_FS=HDR+COMMON+`
-in vec3 vWorld; in float vHeight; in float vTint; out vec4 o;
+in vec3 vWorld; in float vHeight; in float vTint; flat in float vBiome; out vec4 o;
 uniform vec3 uCamEff; uniform float uMode,uMirror,uSnowCover;
 void main(){
   if(uMirror>0.5&&vWorld.y<0.0) discard;
   vec3 alb=mix(vec3(0.055,0.105,0.025),vec3(0.18,0.26,0.075),vHeight);
+  if(vBiome>0.5&&vBiome<1.5) alb*=vec3(0.8,1.22,0.78);
+  else if(vBiome>1.5&&vBiome<2.5) alb= mix(vec3(0.09,0.075,0.038),vec3(0.21,0.18,0.085),vHeight);
+  else if(vBiome>2.5&&vBiome<3.5) alb*=vec3(0.82,0.90,0.80);
+  else if(vBiome>3.5) alb=mix(vec3(0.13,0.085,0.035),vec3(0.36,0.25,0.095),vHeight);
   alb*=0.82+0.38*vTint; alb*=1.0-uRain*0.17;
   alb=mix(alb,vec3(0.56,0.62,0.60),uSnowCover*0.45*smoothstep(2.0,8.0,vWorld.y));
   vec3 col=alb*(vec3(0.32+0.52*uAmbLum)+uHorizon*0.20+uSunCol*0.12);
@@ -211,6 +225,8 @@ function drawIslandDetails(mode,mirror,ce){
     gl.uniformMatrix4fv(L(pIslandRock,'uVP'),false,VP); gl.uniform3fv(L(pIslandRock,'uCamEff'),ce);
     gl.uniform1f(L(pIslandRock,'uMode'),mode); gl.uniform1f(L(pIslandRock,'uMirror'),mirror); gl.uniform1f(L(pIslandRock,'uSnowCover'),snow);
     bindIslandTexture(6,islandTextures.rock,pIslandRock,'uRock');
+    bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pIslandRock,'uBasalt');
+    bindIslandTexture(13,islandTextures.sandstone||islandTextures.talus,pIslandRock,'uSandstone');
     gl.bindVertexArray(d.rocks.vao); gl.drawElementsInstanced(gl.TRIANGLES,d.rocks.indexCount,gl.UNSIGNED_SHORT,0,d.rocks.count);
   }
   if(d.grass.count){
