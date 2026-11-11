@@ -1,0 +1,88 @@
+'use strict';
+/* ============================================================
+   Camera & input
+   ============================================================ */
+const cam={yaw:0.0,pitch:0.24,dist:13,tYaw:0.0,tPitch:0.24,tDist:13,target:[0,0.3,0]};
+let eye=[0,3,13], camF=[0,0,-1], camR=[1,0,0], camU=[0,1,0], VP=null, tanH=0.466, aspect=1;
+function computeCamera(){
+  const cp=Math.cos(cam.pitch);
+  eye=[cam.target[0]+cam.dist*Math.sin(cam.yaw)*cp, cam.target[1]+cam.dist*Math.sin(cam.pitch), cam.target[2]+cam.dist*Math.cos(cam.yaw)*cp];
+  waveSample(eye[0],eye[2],simT,false,S1); const minY=S1.h+0.5; if(eye[1]<minY) eye[1]=minY;
+  let fx=cam.target[0]-eye[0],fy=cam.target[1]-eye[1],fz=cam.target[2]-eye[2]; const fl=Math.hypot(fx,fy,fz); fx/=fl;fy/=fl;fz/=fl;
+  camF=[fx,fy,fz];
+  let rx=fy*0-fz*1, ry=fz*0-fx*0, rz=fx*1-fy*0; // cross(f, up=(0,1,0))
+  rx=-fz; ry=0; rz=fx; const rl=Math.hypot(rx,rz); rx/=rl;rz/=rl; camR=[rx,0,rz];
+  camU=[ry*fz-rz*fy, rz*fx-rx*fz, rx*fy-ry*fx];
+  aspect=canvas.width/canvas.height;
+  tanH=0.466*Math.max(1,1.15/aspect);
+  const proj=M4.persp(2*Math.atan(tanH),aspect,0.1,3000);
+  VP=M4.mul(proj,M4.look(eye,cam.target,[0,1,0]));
+}
+function rayFrom(px,py){
+  const nx=(px/innerWidth)*2-1, ny=1-(py/innerHeight)*2;
+  const d=[camF[0]+nx*tanH*aspect*camR[0]+ny*tanH*camU[0], camF[1]+ny*tanH*camU[1], camF[2]+nx*tanH*aspect*camR[2]+ny*tanH*camU[2]];
+  const l=Math.hypot(d[0],d[1],d[2]); return [d[0]/l,d[1]/l,d[2]/l];
+}
+function pickBall(px,py){
+  const d=rayFrom(px,py); let best=null,bt=1e9;
+  for(const b of balls){
+    const ox=eye[0]-b.x,oy=eye[1]-b.y,oz=eye[2]-b.z, R=b.r*1.2+0.06;
+    const bb=ox*d[0]+oy*d[1]+oz*d[2], c=ox*ox+oy*oy+oz*oz-R*R, disc=bb*bb-c;
+    if(disc<0)continue; let t=-bb-Math.sqrt(disc); if(t<0)t=-bb+Math.sqrt(disc); if(t>0&&t<bt){bt=t;best=b;}
+  }
+  return best?{ball:best,t:bt}:null;
+}
+function spawnAtPointer(px,py){
+  const d=rayFrom(px,py); let x,z;
+  if(d[1]<-0.002){ const t=-(eye[1]-0.0)/d[1]; x=eye[0]+d[0]*t; z=eye[2]+d[2]*t; }
+  else { x=eye[0]+d[0]*10; z=eye[2]+d[2]*10; }
+  const rr=Math.hypot(x,z); if(rr>10){x*=10/rr;z*=10/rr;}
+  spawnBall(x+(Math.random()-0.5)*0.2,4.2+Math.random()*0.6,z+(Math.random()-0.5)*0.2,selType,0,0,0);
+}
+const ptrs=new Map(); let pinch0=0, pinchDist0=13, downT=0, tapStart=null, lastHintHide=false;
+function hideHint(){ if(lastHintHide)return; lastHintHide=true; $('hint').classList.add('gone'); }
+function setGrabTarget(x,y){
+  if(!grab)return; const d=rayFrom(x,y);
+  grab.ball.grab={x:eye[0]+d[0]*grab.depth,y:eye[1]+d[1]*grab.depth,z:eye[2]+d[2]*grab.depth};
+}
+function releaseGrab(){ if(grab){ grab.ball.grab=null; const b=grab.ball; b.wx+=(b.vz)*0.4/b.r*0.3; b.wz-=(b.vx)*0.4/b.r*0.3; grab=null; } }
+canvas.addEventListener('pointerdown',e=>{
+  e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,t:performance.now(),moved:false});
+  hideHint(); canvas.style.cursor='grabbing';
+  if(ptrs.size===1){
+    const hit=pickBall(e.clientX,e.clientY);
+    if(hit){ grab={ball:hit.ball,pid:e.pointerId,depth:hit.t}; setGrabTarget(e.clientX,e.clientY); }
+  } else {
+    releaseGrab();
+    const [a,b]=[...ptrs.values()]; pinch0=Math.hypot(a.x-b.x,a.y-b.y); pinchDist0=cam.tDist;
+  }
+});
+canvas.addEventListener('pointermove',e=>{
+  const p=ptrs.get(e.pointerId); if(!p)return;
+  const dx=e.clientX-p.x,dy=e.clientY-p.y; p.x=e.clientX;p.y=e.clientY;
+  if(Math.hypot(p.x-p.sx,p.y-p.sy)>7) p.moved=true;
+  if(grab&&grab.pid===e.pointerId){ setGrabTarget(e.clientX,e.clientY); return; }
+  if(ptrs.size===1&&p.moved){
+    cam.tYaw-=dx*0.0055; cam.tPitch=clamp(cam.tPitch+dy*0.0045,0.02,1.45);
+  } else if(ptrs.size===2){
+    const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y);
+    if(pinch0>10) cam.tDist=clamp(pinchDist0*pinch0/Math.max(d,10),3.5,45);
+  }
+});
+function endPtr(e){
+  const p=ptrs.get(e.pointerId); if(!p)return;
+  const wasGrab=grab&&grab.pid===e.pointerId;
+  if(wasGrab) releaseGrab();
+  else if(ptrs.size===1&&!p.moved&&performance.now()-p.t<400&&e.type==='pointerup') spawnAtPointer(p.x,p.y);
+  ptrs.delete(e.pointerId);
+  if(ptrs.size<2) pinch0=0;
+  if(ptrs.size===0) canvas.style.cursor='grab';
+}
+canvas.addEventListener('pointerup',endPtr);
+canvas.addEventListener('pointercancel',endPtr);
+canvas.addEventListener('wheel',e=>{e.preventDefault();cam.tDist=clamp(cam.tDist*Math.exp(e.deltaY*0.0012),3.5,45);},{passive:false});
+['gesturestart','gesturechange','gestureend'].forEach(n=>document.addEventListener(n,e=>e.preventDefault()));
+document.addEventListener('touchmove',e=>{ if(e.target===canvas) e.preventDefault(); },{passive:false});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
