@@ -201,7 +201,7 @@ void main(){
   col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   o=vec4(tonemap(col),1.0);
 }`;
-const pIslandRock=program(ROCK_VS,ROCK_FS),pIslandGrass=program(GRASS_VS,GRASS_FS),pIslandBird=program(BIRD_VS,BIRD_FS);
+const pIslandRock=program(ROCK_VS,ROCK_FS,'island rock'),pIslandGrass=program(GRASS_VS,GRASS_FS,'island grass'),pIslandBird=program(BIRD_VS,BIRD_FS,'island bird');
 
 function drawIslandDetails(mode,mirror,ce){
   const d=islands.details; if(!d) return;

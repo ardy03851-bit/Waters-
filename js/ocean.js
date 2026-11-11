@@ -237,72 +237,116 @@ function uploadRipple(){
    Render targets (scene colour/depth for refraction, reflection)
    ============================================================ */
 let scene=null, refl=null, post=null, motion=null, rW=0, rH=0;
-function makeTargets(w,h){
+function disposeTargets(){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   if(scene){ gl.deleteFramebuffer(scene.fb); gl.deleteTexture(scene.color); gl.deleteTexture(scene.depth); }
   if(refl){ gl.deleteFramebuffer(refl.fb); gl.deleteTexture(refl.color); gl.deleteRenderbuffer(refl.depth); }
   if(motion){ gl.deleteFramebuffer(motion.fb); gl.deleteTexture(motion.color); gl.deleteFramebuffer(motion.tileFb); gl.deleteTexture(motion.tile); }
   if(post){ gl.deleteFramebuffer(post.fb); gl.deleteTexture(post.color); gl.deleteTexture(post.depth); }
-  gl.activeTexture(gl.TEXTURE7);
-  scene={fb:gl.createFramebuffer(),color:gl.createTexture(),depth:gl.createTexture()};
-  gl.bindTexture(gl.TEXTURE_2D,scene.color);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindTexture(gl.TEXTURE_2D,scene.depth);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,w,h,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindFramebuffer(gl.FRAMEBUFFER,scene.fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,scene.color,0);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,scene.depth,0);
-  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Scene FBO incomplete');
-  /* enhanced graphics: render ball reflections at full resolution instead of half */
-  if(hqMode){ rW=Math.max(2,w); rH=Math.max(2,h); } else { rW=Math.max(2,w>>1); rH=Math.max(2,h>>1); }
-  refl={fb:gl.createFramebuffer(),color:gl.createTexture(),depth:gl.createRenderbuffer()};
-  gl.bindTexture(gl.TEXTURE_2D,refl.color);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,rW,rH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindRenderbuffer(gl.RENDERBUFFER,refl.depth); gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,rW,rH);
-  gl.bindFramebuffer(gl.FRAMEBUFFER,refl.fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,refl.color,0);
-  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,refl.depth);
-  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Reflection FBO incomplete');
-  /* full-res target the whole frame is drawn into before the post pass
-     (camera motion blur + lens effects) resolves it onto the canvas */
-  post={fb:gl.createFramebuffer(),color:gl.createTexture(),depth:gl.createTexture()};
-  gl.bindTexture(gl.TEXTURE_2D,post.color);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindTexture(gl.TEXTURE_2D,post.depth);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,w,h,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindFramebuffer(gl.FRAMEBUFFER,post.fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,post.color,0);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
-  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Post FBO incomplete');
+  scene=refl=post=motion=null; rW=rH=0;
+}
+function targetResource(resource,name){
+  if(resource) return resource;
+  const error=new Error('Could not create the '+name+' graphics resource.');
+  error.code='FRAMEBUFFER_INCOMPLETE';
+  throw error;
+}
+function checkTarget(name,w,h){
+  const status=gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if(status===gl.FRAMEBUFFER_COMPLETE) return;
+  const glError=gl.getError();
+  const error=new Error(name+' framebuffer is incomplete at '+w+' × '+h+' (status 0x'+status.toString(16)+
+    (glError!==gl.NO_ERROR?', WebGL error 0x'+glError.toString(16):'')+').');
+  error.code='FRAMEBUFFER_INCOMPLETE';
+  throw error;
+}
+function makeTargets(w,h){
+  /* Drop the old allocation before creating the new one, so a resize cannot
+     briefly double the memory required. Incomplete targets are never drawn. */
+  disposeTargets();
+  try{
+    gl.activeTexture(gl.TEXTURE7);
+    scene={fb:null,color:null,depth:null};
+    scene.fb=targetResource(gl.createFramebuffer(),'scene framebuffer');
+    scene.color=targetResource(gl.createTexture(),'scene colour');
+    scene.depth=targetResource(gl.createTexture(),'scene depth');
+    gl.bindTexture(gl.TEXTURE_2D,scene.color);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D,scene.depth);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,w,h,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,scene.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,scene.color,0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,scene.depth,0);
+    checkTarget('Scene',w,h);
+    /* enhanced graphics: render ball reflections at full resolution instead of half */
+    if(hqMode){ rW=Math.max(2,w); rH=Math.max(2,h); } else { rW=Math.max(2,w>>1); rH=Math.max(2,h>>1); }
+    refl={fb:null,color:null,depth:null};
+    refl.fb=targetResource(gl.createFramebuffer(),'reflection framebuffer');
+    refl.color=targetResource(gl.createTexture(),'reflection colour');
+    refl.depth=targetResource(gl.createRenderbuffer(),'reflection depth');
+    gl.bindTexture(gl.TEXTURE_2D,refl.color);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,rW,rH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindRenderbuffer(gl.RENDERBUFFER,refl.depth); gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,rW,rH);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,refl.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,refl.color,0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,refl.depth);
+    checkTarget('Reflection',rW,rH);
+    /* full-res target the whole frame is drawn into before the post pass
+       (camera motion blur + lens effects) resolves it onto the canvas */
+    post={fb:null,color:null,depth:null};
+    post.fb=targetResource(gl.createFramebuffer(),'post framebuffer');
+    post.color=targetResource(gl.createTexture(),'post colour');
+    post.depth=targetResource(gl.createTexture(),'post depth');
+    gl.bindTexture(gl.TEXTURE_2D,post.color);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D,post.depth);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,w,h,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,post.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,post.color,0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
+    checkTarget('Post',w,h);
 
-  /* A separate colour target shares the main depth, so only visible ball
-     fragments write motion. RGBA8 packing avoids requiring float render targets. */
-  motion={fb:gl.createFramebuffer(),color:gl.createTexture(),tileFb:gl.createFramebuffer(),tile:gl.createTexture(),
-    tileW:Math.ceil(w/8),tileH:Math.ceil(h/8)};
-  gl.bindTexture(gl.TEXTURE_2D,motion.color);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.color,0);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
-  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Motion FBO incomplete');
-  gl.bindTexture(gl.TEXTURE_2D,motion.tile);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,motion.tileW,motion.tileH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.tile,0);
-  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Motion tile FBO incomplete');
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    /* A separate colour target shares the main depth, so only visible ball
+       fragments write motion. RGBA8 packing avoids requiring float render targets. */
+    motion={fb:null,color:null,tileFb:null,tile:null,tileW:Math.ceil(w/8),tileH:Math.ceil(h/8)};
+    motion.fb=targetResource(gl.createFramebuffer(),'motion framebuffer');
+    motion.color=targetResource(gl.createTexture(),'motion colour');
+    motion.tileFb=targetResource(gl.createFramebuffer(),'motion tile framebuffer');
+    motion.tile=targetResource(gl.createTexture(),'motion tile');
+    gl.bindTexture(gl.TEXTURE_2D,motion.color);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,motion.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.color,0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,post.depth,0);
+    checkTarget('Motion',w,h);
+    gl.bindTexture(gl.TEXTURE_2D,motion.tile);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,motion.tileW,motion.tileH,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.tile,0);
+    checkTarget('Motion tile',motion.tileW,motion.tileH);
+  }catch(error){
+    disposeTargets();
+    /* Failed allocations can leave multiple WebGL errors queued. Clear only
+       in this recovery path, before retrying at a smaller resolution. */
+    if(!gl.isContextLost()) for(let i=0;i<8&&gl.getError()!==gl.NO_ERROR;i++){}
+    throw error;
+  }finally{
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER,null);
+  }
 }
 

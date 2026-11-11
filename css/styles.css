@@ -413,8 +413,11 @@ body.paused #slowBadge,body.paused #hint{opacity:0!important}
 }
 
 /* ---------- errors ---------- */
-#fail,#err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;background:#06121c;z-index:99;font-size:15px;line-height:1.5;white-space:pre-wrap}
-#err{justify-content:flex-start;align-items:flex-start;font:11px/1.35 ui-monospace,Menlo,monospace;overflow:auto;color:#ffb4b4}
+#fail{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;padding:24px;background:#06121c;z-index:99;font-size:15px;line-height:1.5;overflow:auto}
+.fail-card{width:100%;max-width:540px;margin:auto;text-align:center}.fail-card h1{font-size:24px;margin:0 0 12px}.fail-card p{color:#c2d5df;margin:0 0 20px}
+.fail-actions{display:flex;justify-content:center;flex-wrap:wrap;gap:10px}.fail-actions button{color:#fff;background:#185475;border:1px solid #5c9bb7;border-radius:10px;padding:10px 16px;font:inherit;cursor:pointer}.fail-actions button:hover,.fail-actions button:focus-visible{background:#237399}
+#failDetails{text-align:left;margin-top:22px;color:#a8c0cc;font-size:13px}#failDetails summary{cursor:pointer}
+#err{max-height:30vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:#ffb4b4;font:11px/1.4 ui-monospace,Menlo,monospace;-webkit-user-select:text;user-select:text}
 
 /* ---------- responsive ---------- */
 @media (max-width:900px){

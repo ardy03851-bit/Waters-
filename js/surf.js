@@ -214,7 +214,7 @@ void main(){
   col=mix(col,uFogCol,1.0-exp(-length(uCam-vWorld)*uFogD));
   o=vec4(tonemap(col)*a,a);
 }`;
-const pSurf=program(SURF_VS,SURF_FS), pCoastFoam=program(COAST_FOAM_VS,COAST_FOAM_FS), pWindSpray=program(WIND_SPRAY_VS,WIND_SPRAY_FS);
+const pSurf=program(SURF_VS,SURF_FS,'surf'), pCoastFoam=program(COAST_FOAM_VS,COAST_FOAM_FS,'coastal foam'), pWindSpray=program(WIND_SPRAY_VS,WIND_SPRAY_FS,'wind spray');
 
 function putSurf(list,limit,item){
   /* Recycle the oldest effect instead of letting repeated storms grow forever. */

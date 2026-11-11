@@ -1,11 +1,16 @@
 'use strict';
 const $ = id => document.getElementById(id);
-function showErr(m){ document.body.classList.add('nogl'); const e=$('err'); e.style.display='flex'; e.textContent += m + '\n'; }
-window.addEventListener('error', ev => showErr(String(ev.message)));
 
 const canvas = $('gl');
-const gl = canvas.getContext('webgl2', {antialias:true, alpha:false, powerPreference:'high-performance'});
-if(!gl){ document.body.classList.add('nogl'); $('fail').style.display='flex'; throw new Error('WebGL2 unsupported'); }
+/* Geometry is rendered into our own depth targets; the canvas only receives
+   the final fullscreen post pass. Its default depth and MSAA buffers therefore
+   add no visual quality, but can consume a great deal of GPU memory. */
+const contextOptions={antialias:false,depth:false,stencil:false,alpha:false};
+const gl = canvas.getContext('webgl2',Object.assign({powerPreference:'high-performance'},contextOptions)) ||
+           canvas.getContext('webgl2',contextOptions);
+if(!gl){ const error=new Error('The browser could not create a WebGL 2 context.'); error.code='WEBGL_UNAVAILABLE'; throw error; }
+window.AquaBoot.attachContext(gl);
+if(gl.isContextLost()) window.AquaBoot.contextLost();
 
 /* ============================================================
    Constants & small math helpers
