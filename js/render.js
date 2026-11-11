@@ -4,6 +4,14 @@
    ============================================================ */
 const maxPR=Math.min(window.devicePixelRatio||1,2);
 let pr=Math.min(maxPR,1.5), prCeil=maxPR, curW=0, curH=0;
+/* 'auto' adapts the resolution to hold 60 fps; the other modes pin it */
+let quality='auto', paused=false;
+const QUALITY_PR={low:0.6,medium:0.85,high:1.0,ultra:Math.max(1,maxPR)};
+function setQuality(q){
+  quality=QUALITY_PR[q]?q:'auto';
+  if(quality!=='auto') pr=Math.min(QUALITY_PR[quality],Math.max(1,maxPR)); else { prCeil=maxPR; pr=Math.min(maxPR,1.25); }
+  resize();
+}
 function resize(){
   const w=Math.max(2,Math.floor(innerWidth*pr)), h=Math.max(2,Math.floor(innerHeight*pr));
   if(w!==curW||h!==curH){ curW=w;curH=h;canvas.width=w;canvas.height=h; makeTargets(w,h); }
@@ -86,6 +94,21 @@ function render(){
     gl.bindVertexArray(partVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,pCount); gl.bindVertexArray(null);
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
+  drawPrecip(Hh);
+}
+
+/* save the current frame as a PNG (rendered and read back in the same task, so no preserveDrawingBuffer needed) */
+function screenshot(done){
+  try{
+    render();
+    canvas.toBlob(b=>{
+      if(!b){ done&&done(false); return; }
+      const a=document.createElement('a'), u=URL.createObjectURL(b);
+      a.href=u; a.download='aqua-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.png';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000);
+      done&&done(true);
+    },'image/png');
+  }catch(e){ done&&done(false); }
 }
 
 /* ============================================================
@@ -97,34 +120,40 @@ function frame(now){
   const rdtMs=now-lastT; lastT=now; if(!(rdtMs>0)) return;
   const dt=Math.min(rdtMs/1000,0.05);
   ema=ema*0.94+Math.min(rdtMs,100)*0.06; frameN++; cool--; ceilTimer+=dt;
-  if(cool<=0&&frameN>40){
-    if(ema>20.5&&pr>0.65){ prCeil=Math.max(0.7,pr-0.05); pr=Math.max(0.65,pr-0.12); cool=60; resize(); }
-    else if(ema<17.6&&pr<prCeil-0.001){ pr=Math.min(prCeil,pr+0.06); cool=120; resize(); }
+  if(quality==='auto'){
+    if(cool<=0&&frameN>40){
+      if(ema>20.5&&pr>0.65){ prCeil=Math.max(0.7,pr-0.05); pr=Math.max(0.65,pr-0.12); cool=60; }
+      else if(ema<17.6&&pr<prCeil-0.001){ pr=Math.min(prCeil,pr+0.06); cool=120; }
+    }
+    if(ceilTimer>25){ ceilTimer=0; prCeil=Math.min(maxPR,prCeil+0.1); }
   }
-  if(ceilTimer>25){ ceilTimer=0; prCeil=Math.min(maxPR,prCeil+0.1); }
   resize();
 
-  sea+=(seaT-sea)*Math.min(1,dt*1.6);
-  updateWaves(sea); updateSky();
-  const ws=2.5+11*sea; windX=Math.sin(WIND_ANG)*ws; windZ=Math.cos(WIND_ANG)*ws;
+  const sdt=paused?0:dt*timeScale;      /* simulated time this frame */
+  updateEnv(dt,sdt);
+  updateWaves(sea);
+  updateCamera(dt);
 
-  cam.yaw+=(cam.tYaw-cam.yaw)*Math.min(1,dt*10);
-  cam.pitch+=(cam.tPitch-cam.pitch)*Math.min(1,dt*10);
-  cam.dist+=(cam.tDist-cam.dist)*Math.min(1,dt*8);
-
-  acc+=dt*timeScale; let steps=0;
+  acc+=sdt; let steps=0;
   while(acc>=H&&steps<12){ physicsStep(); acc-=H; steps++; }
   if(steps>=12) acc=0;
-  particlesStep(dt*timeScale);
+  particlesStep(sdt);
+  updatePrecip(sdt);
   uploadRipple();
   render();
+  if(typeof audioFrame==='function') audioFrame(dt);
 
   if(now-lastStat>500){
     lastStat=now; fpsShown=Math.round(1000/ema);
-    updateStats(Math.min(fpsShown,120),balls.length,pr,Math.round(sea*100));
+    updateStats(Math.min(fpsShown,120),balls.length,pr,sigWaveHeight());
     if(frameN>3) uiReady();
   }
 }
+/* a lost GPU context cannot be repaired in place – reload once it comes back */
+canvas.addEventListener('webglcontextlost',e=>{ e.preventDefault(); showErr('The graphics context was lost. Reloading…'); });
+canvas.addEventListener('webglcontextrestored',()=>location.reload());
+
+updateEnv(0.016,0); updateWaves(sea);
 resize();
 requestAnimationFrame(t=>{ lastT=t; frame(t); });
 

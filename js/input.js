@@ -4,6 +4,9 @@
    ============================================================ */
 const cam={yaw:0.0,pitch:0.24,dist:13,tYaw:0.0,tPitch:0.24,tDist:13,target:[0,0.3,0]};
 let eye=[0,3,13], camF=[0,0,-1], camR=[1,0,0], camU=[0,1,0], VP=null, tanH=0.466, aspect=1;
+/* camera options (set from the UI) */
+let fovDeg=50, autoOrbit=false, followBall=false, launchMode='drop', throwSpeed=14;
+const HOME_TARGET=[0,0.3,0];
 function computeCamera(){
   const cp=Math.cos(cam.pitch);
   eye=[cam.target[0]+cam.dist*Math.sin(cam.yaw)*cp, cam.target[1]+cam.dist*Math.sin(cam.pitch), cam.target[2]+cam.dist*Math.cos(cam.yaw)*cp];
@@ -14,7 +17,7 @@ function computeCamera(){
   rx=-fz; ry=0; rz=fx; const rl=Math.hypot(rx,rz); rx/=rl;rz/=rl; camR=[rx,0,rz];
   camU=[ry*fz-rz*fy, rz*fx-rx*fz, rx*fy-ry*fx];
   aspect=canvas.width/canvas.height;
-  tanH=0.466*Math.max(1,1.15/aspect);
+  tanH=Math.tan(fovDeg*Math.PI/360)*Math.max(1,1.15/aspect);
   const proj=M4.persp(2*Math.atan(tanH),aspect,0.1,3000);
   VP=M4.mul(proj,M4.look(eye,cam.target,[0,1,0]));
 }
@@ -33,12 +36,32 @@ function pickBall(px,py){
   return best?{ball:best,t:bt}:null;
 }
 function spawnAtPointer(px,py){
-  const d=rayFrom(px,py); let x,z;
+  const d=rayFrom(px,py);
+  if(launchMode==='throw'){
+    /* throw from the camera along the tap direction (start inside the play area if the camera is far out) */
+    const far=Math.hypot(eye[0],eye[2]), t0=Math.max(1.2,far-18);
+    const b=spawnBall(eye[0]+d[0]*t0,Math.max(eye[1]+d[1]*t0-0.25,0.6),eye[2]+d[2]*t0,selType,d[0]*throwSpeed,d[1]*throwSpeed+2.2,d[2]*throwSpeed);
+    b.wx=d[2]*6; b.wz=-d[0]*6;
+    return;
+  }
+  let x,z;
   if(d[1]<-0.002){ const t=-(eye[1]-0.0)/d[1]; x=eye[0]+d[0]*t; z=eye[2]+d[2]*t; }
   else { x=eye[0]+d[0]*10; z=eye[2]+d[2]*10; }
   const rr=Math.hypot(x,z); if(rr>10){x*=10/rr;z*=10/rr;}
   spawnBall(x+(Math.random()-0.5)*0.2,4.2+Math.random()*0.6,z+(Math.random()-0.5)*0.2,selType,0,0,0);
 }
+/* per-frame camera behaviour: easing, auto-orbit, follow the newest ball */
+function updateCamera(dt){
+  if(autoOrbit&&ptrs.size===0) cam.tYaw+=dt*0.07;
+  cam.yaw+=(cam.tYaw-cam.yaw)*Math.min(1,dt*10);
+  cam.pitch+=(cam.tPitch-cam.pitch)*Math.min(1,dt*10);
+  cam.dist+=(cam.tDist-cam.dist)*Math.min(1,dt*8);
+  let tx=HOME_TARGET[0],ty=HOME_TARGET[1],tz=HOME_TARGET[2];
+  if(followBall&&balls.length){ const b=balls[balls.length-1]; tx=b.x; ty=clamp(b.y,-1.5,6)*0.6+0.2; tz=b.z; }
+  const k=Math.min(1,dt*3.5);
+  cam.target[0]+=(tx-cam.target[0])*k; cam.target[1]+=(ty-cam.target[1])*k; cam.target[2]+=(tz-cam.target[2])*k;
+}
+function resetCamera(){ cam.tYaw=Math.round(cam.yaw/(2*Math.PI))*2*Math.PI; cam.tPitch=0.24; cam.tDist=13; }
 const ptrs=new Map(); let pinch0=0, pinchDist0=13, downT=0, tapStart=null, lastHintHide=false;
 function hideHint(){ if(lastHintHide)return; lastHintHide=true; $('hint').classList.add('gone'); }
 function setGrabTarget(x,y){

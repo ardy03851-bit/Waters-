@@ -89,15 +89,16 @@ const emptyVAO=gl.createVertexArray();
 /* ============================================================
    Ocean wave model (shared by GPU shader and CPU physics)
    ============================================================ */
-const WIND_ANG=1.1;
+let windAng=1.1;   /* direction the wind (and the waves) travel towards, radians */
 const WL=[26,17,11.5,7.2,4.6,3.0,2.0,1.3];
 const WOFF=[0,0.35,-0.4,0.8,-0.9,1.3,-1.5,2.0];
-const wv=WL.map((Lw,i)=>{const k=2*Math.PI/Lw,a=WIND_ANG+WOFF[i];return{L:Lw,k,om:Math.sqrt(G*k),dx:Math.sin(a),dz:Math.cos(a),ph:i*2.399,A:0,q:0,qk:0};});
+const wv=WL.map((Lw,i)=>{const k=2*Math.PI/Lw,a=windAng+WOFF[i];return{L:Lw,k,om:Math.sqrt(G*k),dx:Math.sin(a),dz:Math.cos(a),ph:i*2.399,A:0,q:0,qk:0};});
 const uWArr=new Float32Array(32), uQArr=new Float32Array(8);
 let waveA0=0.3;
 function updateWaves(s){
   for(let i=0;i<8;i++){
-    const w=wv[i];
+    const w=wv[i], a=windAng+WOFF[i];
+    w.dx=Math.sin(a); w.dz=Math.cos(a);
     w.A=w.L*0.016*(0.25+1.25*s);
     w.q=0.085*(0.35+0.65*s); w.qk=w.q/w.k;
     uWArr[i*4]=w.dx;uWArr[i*4+1]=w.dz;uWArr[i*4+2]=w.k;uWArr[i*4+3]=w.A; uQArr[i]=w.q;
@@ -122,6 +123,8 @@ function waveSample(x,z,t,full,out){
   }
   out.h=h;out.vx=vx;out.vy=vy;out.vz=vz;out.ax=ax;out.az=az;
 }
+/* significant wave height of the current sea (4·σ of the surface elevation) */
+function sigWaveHeight(){ let v=0; for(let i=0;i<8;i++) v+=wv[i].A*wv[i].A*0.5; return 4*Math.sqrt(v); }
 function surfH(x,z,t){
   let h=0; for(let i=0;i<8;i++){const w=wv[i];h+=w.A*Math.sin(w.k*(w.dx*x+w.dz*z)-w.om*t+w.ph);} return h;
 }
@@ -143,29 +146,49 @@ const foamArr=new Float32Array(RN*RN), ripData=new Float32Array(RN*RN*2), dampAr
   }
 })();
 const cellSz=2*RR/RN, RC2=Math.pow(1.8/120/cellSz,2);
+/* Hard limits. Whatever is thrown at the water, the interactive layer can never
+   rise above RIP_MAX, and anything non-finite is flushed to flat water.        */
+const RIP_MAX=0.5, RIP_SOFT=0.34;
 function rippleStep(){
   for(let y=1;y<RN-1;y++){
     let i=y*RN+1;
     for(let x=1;x<RN-1;x++,i++){
       const c=cur[i];
       const lap=cur[i-1]+cur[i+1]+cur[i-RN]+cur[i+RN]-4*c;
-      prv[i]=(2*c-prv[i]+RC2*lap)*dampArr[i];
+      let v=(2*c-prv[i]+RC2*lap)*dampArr[i];
+      if(v>RIP_SOFT) v=RIP_SOFT+(v-RIP_SOFT)*0.5; else if(v<-RIP_SOFT) v=-RIP_SOFT+(v+RIP_SOFT)*0.5;
+      if(!(v<=RIP_MAX)) v=v>RIP_MAX?RIP_MAX:0;
+      if(v<-RIP_MAX) v=-RIP_MAX;
+      prv[i]=v;
       foamArr[i]*=0.9972;
     }
   }
   const t=cur;cur=prv;prv=t;
 }
+/* Disturbances are injected as *displacement* of the surface: the same amount is
+   written to the current and the previous state, so no velocity is added.
+   (Writing only the current state – as the first version did – turned every
+   injection into a velocity kick; pushing a ball through the surface added one
+   each physics step and the water kept accelerating upwards until it broke.)   */
+function ripAdd(i,d){
+  if(!(d===d)) return;
+  let v=cur[i]+d; v=v>RIP_MAX?RIP_MAX:v<-RIP_MAX?-RIP_MAX:v;
+  const applied=v-cur[i]; cur[i]=v;
+  let pv=prv[i]+applied; prv[i]=pv>RIP_MAX?RIP_MAX:pv<-RIP_MAX?-RIP_MAX:pv;
+}
 function addRipple(wx,wz,rad,amt){
+  if(!isFinite(wx+wz+rad+amt)) return;
   const gx=(wx/(2*RR)+0.5)*RN-0.5,gz=(wz/(2*RR)+0.5)*RN-0.5,rc=rad/cellSz;
   const x0=Math.max(1,Math.floor(gx-rc)),x1=Math.min(RN-2,Math.ceil(gx+rc));
   const z0=Math.max(1,Math.floor(gz-rc)),z1=Math.min(RN-2,Math.ceil(gz+rc));
   const r2=rc*rc;
   for(let zi=z0;zi<=z1;zi++)for(let xi=x0;xi<=x1;xi++){
     const dx=xi-gx,dz=zi-gz,d2=(dx*dx+dz*dz)/r2; if(d2>=1)continue;
-    let w=1-d2;w*=w; const i=zi*RN+xi; let v=cur[i]+amt*w; cur[i]=v>0.7?0.7:v<-0.7?-0.7:v;
+    let w=1-d2;w*=w; ripAdd(zi*RN+xi,amt*w);
   }
 }
 function addFoam(wx,wz,rad,amt){
+  if(!isFinite(wx+wz+rad+amt)) return;
   const gx=(wx/(2*RR)+0.5)*RN-0.5,gz=(wz/(2*RR)+0.5)*RN-0.5,rc=rad/cellSz;
   const x0=Math.max(1,Math.floor(gx-rc)),x1=Math.min(RN-2,Math.ceil(gx+rc));
   const z0=Math.max(1,Math.floor(gz-rc)),z1=Math.min(RN-2,Math.ceil(gz+rc));
@@ -177,14 +200,16 @@ function addFoam(wx,wz,rad,amt){
 }
 /* annular bump: the raised rim that surrounds an impact cavity */
 function addRing(wx,wz,rad,wid,amt){
+  if(!isFinite(wx+wz+rad+wid+amt)) return;
   const gx=(wx/(2*RR)+0.5)*RN-0.5,gz=(wz/(2*RR)+0.5)*RN-0.5,rc=rad/cellSz,wc=Math.max(wid/cellSz,0.8),ro=rc+2*wc;
   const x0=Math.max(1,Math.floor(gx-ro)),x1=Math.min(RN-2,Math.ceil(gx+ro));
   const z0=Math.max(1,Math.floor(gz-ro)),z1=Math.min(RN-2,Math.ceil(gz+ro));
   for(let zi=z0;zi<=z1;zi++)for(let xi=x0;xi<=x1;xi++){
     const dx=xi-gx,dz=zi-gz,q=(Math.sqrt(dx*dx+dz*dz)-rc)/wc; if(q>2||q<-2)continue;
-    const i=zi*RN+xi; const v=cur[i]+amt*Math.exp(-q*q*1.4); cur[i]=v>0.7?0.7:v<-0.7?-0.7:v;
+    ripAdd(zi*RN+xi,amt*Math.exp(-q*q*1.4));
   }
 }
+function resetRipples(){ rA.fill(0); rB.fill(0); foamArr.fill(0); }
 const texRip=gl.createTexture();
 gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D,texRip);
 gl.texImage2D(gl.TEXTURE_2D,0,gl.RG16F,RN,RN,0,gl.RG,gl.FLOAT,ripData);
@@ -231,35 +256,5 @@ function makeTargets(w,h){
   gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,refl.depth);
   if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE) showErr('Reflection FBO incomplete');
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-}
-
-/* ============================================================
-   Sky / time of day
-   ============================================================ */
-let sea=0.38, seaT=0.38, sunV=0.58;
-const sky={sun:[0,1,0],sunCol:[1,1,1],zenith:[0,0,0],horizon:[0,0,0],glow:[0,0,0],ambLum:1,sunLum:3,cloudLo:0.6,storm:0};
-function updateSky(){
-  const eps=0.03+sunV*1.22, day=sstep(0.02,0.6,eps), s=sea;
-  const az=-0.5, ce=Math.cos(eps);
-  sky.sun=[Math.sin(az)*ce,Math.sin(eps),-Math.cos(az)*ce];
-  let z=lerp3([0.05,0.08,0.26],[0.09,0.24,0.62],day);
-  let h=lerp3([0.85,0.38,0.2],[0.62,0.77,0.92],Math.pow(day,0.7));
-  const gz=[0.12,0.14,0.17], gh=[0.33,0.36,0.40];
-  z=lerp3(z,gz.map(v=>v*(0.4+day)),s*0.65); z=z.map(v=>v*(1-0.3*s));
-  h=lerp3(h,gh.map(v=>v*(0.5+0.5*day)),s*0.5);
-  sky.zenith=z; sky.horizon=h;
-  const gk=(1-day*0.8)*0.9; sky.glow=[1.0*gk,0.5*gk,0.22*gk].map(v=>v*(1-0.6*s));
-  const inten=2.9*(0.4+0.6*sstep(0,0.3,eps))*(1-0.72*s);
-  const c=lerp3([1,0.42,0.16],[1,0.94,0.84],sstep(0.05,0.5,eps));
-  sky.sunCol=c.map(v=>v*inten); sky.sunLum=inten;
-  sky.ambLum=(0.3+0.7*day)*(1-0.35*s);
-  sky.cloudLo=0.64-0.26*s; sky.storm=s;
-}
-function setSky(p){
-  gl.uniform1f(L(p,'uTime'),simT); gl.uniform1f(L(p,'uStorm'),sky.storm);
-  gl.uniform1f(L(p,'uAmbLum'),sky.ambLum); gl.uniform1f(L(p,'uSunLum'),sky.sunLum);
-  gl.uniform1f(L(p,'uCloudLo'),sky.cloudLo); gl.uniform1f(L(p,'uExp'),0.88);
-  gl.uniform3fv(L(p,'uSun'),sky.sun); gl.uniform3fv(L(p,'uSunCol'),sky.sunCol);
-  gl.uniform3fv(L(p,'uZenith'),sky.zenith); gl.uniform3fv(L(p,'uHorizon'),sky.horizon); gl.uniform3fv(L(p,'uGlow'),sky.glow);
 }
 
