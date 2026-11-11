@@ -242,9 +242,27 @@ const BALL_VS = HDR + `
 layout(location=0) in vec3 aPos;
 uniform mat4 uVP; uniform vec3 uPos; uniform float uR; uniform mat3 uRot;
 uniform float uMirror,uPlane;
+uniform vec3 uVel; uniform float uShutterB;
 out vec3 vWorld; out vec3 vWN; out vec3 vLocal;
 void main(){
   vec3 wl=uRot*aPos;
+  /* object blur: smear the sphere along its velocity like a finite exposure.
+     The swept path over the shutter becomes an ellipsoid: leading edge stays
+     at the true leading edge, the trail stretches behind by the same amount. */
+  if(uShutterB>0.0){
+    float sp=length(uVel);
+    if(sp>0.4){
+      float path=min(sp*uShutterB,uR*4.0);
+      vec3 dirW=uVel/sp;
+      vec3 dl=transpose(uRot)*dirW;
+      wl+=dirW*(dot(aPos,dl)*path*0.5/uR);
+      vec3 w=uPos+wl*uR-dirW*path*0.5;
+      vLocal=aPos; vWN=wl; vWorld=w;
+      if(uMirror>0.5) w.y=2.0*uPlane-w.y;
+      gl_Position=uVP*vec4(w,1.0);
+      return;
+    }
+  }
   vec3 w=uPos+wl*uR;
   vLocal=aPos; vWN=wl; vWorld=w;
   if(uMirror>0.5) w.y=2.0*uPlane-w.y;
@@ -469,6 +487,52 @@ void main(){
   o=vec4(tonemap(c)*a,a);
 }`;
 
+/* ---- Post-process: camera motion blur + lens effects ----
+   True motion blur: each pixel's world point is rebuilt from its depth and
+   reprojected with the previous frame's view-projection, giving the exact
+   screen-space motion vector (rotation *and* translation of the camera).
+   Sky has no depth, so its distance is clamped – there, rotation dominates. */
+const POST_VS = HDR + `
+out vec2 vNdc;
+void main(){
+  vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));
+  vNdc=p*2.0-1.0;
+  gl_Position=vec4(vNdc,1.0,1.0);
+}`;
+const POST_FS = HDR + `
+in vec2 vNdc; out vec4 o;
+uniform sampler2D uScene,uDepth;
+uniform vec2 uRes,uNF,uTanAsp;
+uniform vec3 uCam,uCamF,uCamR,uCamU;
+uniform mat4 uPrevVP;
+uniform float uMB,uCA,uVig;
+float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
+vec3 tap(vec2 p,vec2 ca){return vec3(texture(uScene,p-ca).r,texture(uScene,p).g,texture(uScene,p+ca).b);}
+void main(){
+  vec2 uv=vNdc*0.5+0.5;
+  vec2 ca=(uv-0.5)*uCA;                    /* chromatic aberration grows to the edges */
+  vec3 c;
+  if(uMB>0.001){
+    vec3 rd=normalize(uCamF+vNdc.x*uTanAsp.x*uTanAsp.y*uCamR+vNdc.y*uTanAsp.x*uCamU);
+    float d=texture(uDepth,uv).r;
+    float vw=min(linZ(d),600.0);            /* sky clamped to 600 m – rotation only */
+    vec3 wp=uCam+rd*(vw/max(dot(rd,uCamF),0.2));
+    vec4 pc=uPrevVP*vec4(wp,1.0);
+    vec2 duv=vec2(0.0);
+    if(pc.w>0.01){
+      vec2 pN=pc.xy/pc.w;
+      duv=clamp((uv-(pN*0.5+0.5))*uMB,vec2(-0.035),vec2(0.035));
+    }
+    c=vec3(0.0);
+    for(int i=0;i<8;i++) c+=tap(uv-duv*float(i)/7.0,ca);
+    c/=8.0;
+  } else {
+    c=tap(uv,ca);
+  }
+  c*=1.0-uVig*smoothstep(0.38,0.92,length(uv-0.5));   /* gentle lens vignette */
+  o=vec4(c,1.0);
+}`;
+
 function compile(type,src){
   const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ const m=gl.getShaderInfoLog(s); showErr('Shader error: '+m); throw new Error(m); }
@@ -488,4 +552,5 @@ const pSky=program(SKY_VS,SKY_FS);
 const pBall=program(BALL_VS,BALL_FS);
 const pPart=program(PART_VS,PART_FS);
 const pPrecip=program(PRECIP_VS,PRECIP_FS);
+const pPost=program(POST_VS,POST_FS);
 

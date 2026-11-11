@@ -24,7 +24,7 @@ const DEFAULTS={
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
   fov:50, orbit:false, follow:false,
-  quality:'auto', splash:1, stats:true, sound:false, volume:0.7
+  quality:'auto', splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true, stats:true, sound:false, volume:0.7
 };
 /* weather = a consistent set of physical quantities */
 const WEATHERS={
@@ -92,6 +92,9 @@ const CONTROLS=[
 
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
   {tab:'system',t:'range',k:'splash',label:'Splash detail',min:0.3,max:1.5,step:0.05,fmt:pct},
+  {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Camera blur and smeared fast-moving objects'},
+  {tab:'system',t:'range',k:'blur',label:'Blur strength',min:0.2,max:2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'system',t:'toggle',k:'lensFx',label:'Lens effects',sub:'Chromatic aberration and vignette'},
   {tab:'system',t:'toggle',k:'stats',label:'Performance stats',sub:'Frame rate, balls, resolution'},
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
@@ -151,6 +154,9 @@ function apply(k){
     case 'follow': followBall=v; break;
     case 'quality': setQuality(v); break;
     case 'splash': splashAmt=v; break;
+    case 'motionBlur': motionBlurOn=v; break;
+    case 'blur': blurStrength=v; break;
+    case 'lensFx': lensFxOn=v; break;
     case 'stats': $('stats').classList.toggle('off',!v); break;
     case 'sound': if(!audioSet(v,S.volume)&&v){ S.sound=false; toast('Sound is not available in this browser'); } break;
     case 'volume': audioSet(undefined,v); break;

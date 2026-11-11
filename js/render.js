@@ -6,6 +6,11 @@ const maxPR=Math.min(window.devicePixelRatio||1,2);
 let pr=Math.min(maxPR,1.5), prCeil=maxPR, curW=0, curH=0;
 /* 'auto' adapts the resolution to hold 60 fps; the other modes pin it */
 let quality='auto', paused=false;
+/* realism effects (set from the UI): camera + object motion blur, lens effects */
+let motionBlurOn=true, blurStrength=1, lensFxOn=true;
+/* previous frame's view-projection, for the motion-blur reprojection */
+const prevVPm=new Float32Array(16);
+let havePrev=false;
 const QUALITY_PR={low:0.6,medium:0.85,high:1.0,ultra:Math.max(1,maxPR)};
 function setQuality(q){
   quality=QUALITY_PR[q]?q:'auto';
@@ -23,6 +28,9 @@ function drawBalls(mode,mirror){
   gl.useProgram(pBall); setSky(pBall);
   gl.uniformMatrix4fv(L(pBall,'uVP'),false,VP);
   gl.uniform1f(L(pBall,'uMode'),mode); gl.uniform1f(L(pBall,'uMirror'),mirror);
+  /* ball shutter: the same exposure the splash drops use, scaled by the
+     blur setting (and shortened in slow motion, like a high-speed camera) */
+  gl.uniform1f(L(pBall,'uShutterB'),motionBlurOn?Math.min(shutter*0.6*blurStrength,0.04):0);
   gl.bindVertexArray(sphereVAO);
   for(const b of balls){
     const q=b.q,x=q[0],y=q[1],z=q[2],w=q[3],m=b.rot;
@@ -31,6 +39,7 @@ function drawBalls(mode,mirror){
     m[6]=2*(x*z+w*y);m[7]=2*(y*z-w*x);m[8]=1-2*(x*x+y*y);
     gl.uniform3f(L(pBall,'uPos'),b.x,b.y,b.z); gl.uniform1f(L(pBall,'uR'),b.r);
     gl.uniformMatrix3fv(L(pBall,'uRot'),false,m);
+    gl.uniform3f(L(pBall,'uVel'),b.vx,b.vy,b.vz);
     gl.uniform1f(L(pBall,'uType'),b.type); gl.uniform1f(L(pBall,'uPlane'),b.wh);
     gl.uniform3f(L(pBall,'uCamEff'),eye[0],mirror?2*b.wh-eye[1]:eye[1],eye[2]);
     gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
@@ -53,8 +62,8 @@ function render(){
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   drawBalls(1,0);
 
-  /* main pass */
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,Hh);
+  /* main pass (into the post target – resolved to the canvas afterwards) */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,post.fb); gl.viewport(0,0,W,Hh);
   gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.disable(gl.DEPTH_TEST);
   gl.useProgram(pSky); setSky(pSky);
@@ -95,6 +104,34 @@ function render(){
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
   drawPrecip(Hh);
+  postPass();
+}
+
+/* post pass: camera motion blur (reprojection against last frame's camera),
+   plus lens effects – chromatic aberration and a gentle vignette */
+function postPass(){
+  const W=canvas.width,Hh=canvas.height;
+  const mb=(motionBlurOn&&havePrev)?Math.min(blurStrength,2):0;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,W,Hh);
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.useProgram(pPost);
+  gl.uniform2f(L(pPost,'uRes'),W,Hh);
+  gl.uniform2f(L(pPost,'uNF'),0.1,3000);
+  gl.uniform2f(L(pPost,'uTanAsp'),tanH,aspect);
+  gl.uniform3fv(L(pPost,'uCam'),eye);
+  gl.uniform3fv(L(pPost,'uCamF'),camF); gl.uniform3fv(L(pPost,'uCamR'),camR); gl.uniform3fv(L(pPost,'uCamU'),camU);
+  gl.uniformMatrix4fv(L(pPost,'uPrevVP'),false,prevVPm);
+  gl.uniform1f(L(pPost,'uMB'),mb);
+  gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0);
+  gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,post.depth);
+  gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.bindVertexArray(null);
+  gl.activeTexture(gl.TEXTURE0);
+  /* remember this frame's camera for the next one */
+  prevVPm.set(VP); havePrev=true;
 }
 
 /* save the current frame as a PNG (rendered and read back in the same task, so no preserveDrawingBuffer needed) */
