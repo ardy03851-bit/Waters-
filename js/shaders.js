@@ -135,7 +135,7 @@ in vec3 vWorld; in vec3 vN; in float vFoam;
 out vec4 o;
 uniform vec3 uCam,uCamR,uCamF;
 uniform float uRipR,uRipN,uA0;
-uniform vec2 uRes,uNF;
+uniform vec2 uRes,uNF,uWind;
 uniform float uHQ,uIslands,uSeaState;
 uniform sampler2D uRip,uScene,uSceneD,uRefl,uIslandMap;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
@@ -160,13 +160,20 @@ void main(){
   vec3 d1=texture(uDetail,t1).xyz*2.0-1.0;
   vec3 d2=texture(uDetail,t2).xyz*2.0-1.0;
   vec3 d3=texture(uDetail,t3).xyz*2.0-1.0;
-  float dw=(0.40+0.55*uRough)*df;
+  float dw=(0.28+0.44*uRough)*df;
   s+=(d1.xz*0.8+d2.xz*0.6+d3.xz*0.35)*dw;
+  /* Wind-aligned capillaries, stretched along the breeze rather than a
+     repeating isotropic normal map. Mip filtering quiets them at distance. */
+  vec2 along=normalize(uWind), across=vec2(-along.y,along.x);
+  vec2 windUV=vec2(dot(vWorld.xz,along)*0.13-uTime*0.035,
+                   dot(vWorld.xz,across)*0.85+uTime*0.008);
+  vec2 windN=texture(uDetail,windUV).xz*2.0-1.0;
+  s+=(along*windN.x+across*windN.y)*(0.07+0.10*uRough)*df;
   /* enhanced graphics: two more capillary octaves close to the camera */
   if(uHQ>0.5){
     vec2 t4=vWorld.xz*4.1+vec2(-uTime*0.06,uTime*0.09);
     vec2 t5=vWorld.xz*7.9+vec2(uTime*0.13,-uTime*0.04);
-    s+=(texture(uDetail,t4).xz*0.22+texture(uDetail,t5).xz*0.12)*dw;
+    s+=((texture(uDetail,t4).xz*2.0-1.0)*0.17+(texture(uDetail,t5).xz*2.0-1.0)*0.08)*dw;
   }
   if(uRain>0.01){
     /* rain-pitted surface: fast, fine normal noise (the nearby rings come from the ripple sim) */
@@ -209,10 +216,12 @@ void main(){
       float floorY=land.r*40.0-12.0;
       float depth=max(vWorld.y-floorY,0.0), coast=land.g*12.0;
       float shallow=(1.0-smoothstep(0.8,6.0,depth))*(1.0-smoothstep(2.5,10.0,coast));
-      body=mix(body,body*0.65+uTurq*(0.15+0.24*uAmbLum)+vec3(0.012,0.045,0.027),shallow*0.65);
-      float wavelet=0.5+0.5*sin(coast*3.5-uTime*(1.7+uSeaState)+texture(uDetail,vWorld.xz*0.15).a*3.0);
-      float wash=(1.0-smoothstep(0.25,3.0+uSeaState*1.7,coast));
-      shoreFoam=wash*(0.40+0.35*uSeaState)*(0.65+0.35*wavelet);
+      body=mix(body,body*0.72+uTurq*(0.11+0.20*uAmbLum)+vec3(0.012,0.032,0.021),shallow*0.58);
+      /* Wave fronts advance and dissolve in a broken, uneven coastal wash. */
+      float noise=texture(uDetail,vWorld.xz*0.18+vec2(uTime*0.009,-uTime*0.006)).a;
+      float wavelet=pow(0.5+0.5*sin(coast*2.4-uTime*(1.15+uSeaState*0.7)+noise*3.4),2.0);
+      float wash=1.0-smoothstep(0.15,2.7+uSeaState*1.8,coast);
+      shoreFoam=wash*(0.30+0.40*uSeaState)*(0.45+0.55*wavelet);
     }
   }
 
@@ -242,16 +251,23 @@ void main(){
   float vh=max(dot(V,H),0.0);
   float Fs=0.02+0.98*pow(1.0-vh,5.0);
   float nl=max(dot(N,L),0.0);
-  vec3 spec=uSunCol*min(D*Fs/(4.0*max(nv,0.08)),22.0)*smoothstep(0.0,0.12,nl)*step(0.0,L.y);
+  vec3 spec=uSunCol*min(D*Fs/(4.0*max(nv,0.08)),22.0)*0.78*smoothstep(0.0,0.12,nl)*step(0.0,L.y);
 
-  /* foam */
-  float foamAmt=clamp(vFoam+min(foamSim,0.62)+shoreFoam,0.0,1.0);
-  float fn=texture(uDetail,vWorld.xz*0.55+vec2(uTime*0.01,-uTime*0.013)).a*0.6
-          +texture(uDetail,vWorld.xz*1.9-vec2(uTime*0.02,0.0)).a*0.4;
-  float fm=smoothstep(1.0-foamAmt*1.15,1.0-foamAmt*1.15+0.18,fn);
-  float foamLight=0.42*uAmbLum+0.22*uSunLum*max(dot(N,L),0.0);
-  vec3 foamCol=vec3(0.94,0.97,1.0)*foamLight*(0.78+0.44*fn);
-  col=mix(col+spec*(1.0-fm),foamCol,fm*0.92);
+  /* White water is a layered lace of bubbles and filaments, not opaque
+     round spots. The crest, interactive wake and shore wash share the same
+     advected detail while keeping their own coverage. */
+  vec2 fp=vWorld.xz+along*uTime*0.055;
+  float f0=texture(uDetail,fp*0.34).a;
+  float f1=texture(uDetail,fp*1.15+vec2(1.7,-2.3)).a;
+  float f2=texture(uDetail,fp*3.1+vec2(-3.1,0.8)).a;
+  float fn=f0*0.50+f1*0.34+f2*0.16;
+  float bubbles=smoothstep(0.41,0.66,fn+0.08*(f1-0.5));
+  float filaments=1.0-smoothstep(0.035,0.13,abs(f0-0.51+(f1-0.5)*0.35));
+  float coverage=clamp(vFoam*0.9+min(foamSim,0.72)*0.9+shoreFoam,0.0,1.0);
+  float fm=clamp(coverage*(0.48*bubbles+0.33*filaments)+coverage*coverage*0.22*bubbles,0.0,0.9);
+  float foamLight=0.40*uAmbLum+0.20*uSunLum*max(dot(N,L),0.0)+0.08*uStorm;
+  vec3 foamCol=vec3(0.90,0.94,0.95)*foamLight*(0.80+0.35*fn);
+  col=mix(col+spec*(1.0-fm),foamCol,fm);
 
   /* horizon haze */
   float fog=max(smoothstep(100.0,580.0,dist),1.0-exp(-dist*uFogD));
@@ -284,28 +300,11 @@ const BALL_VS = HDR + `
 layout(location=0) in vec3 aPos;
 uniform mat4 uVP; uniform vec3 uPos; uniform float uR; uniform mat3 uRot;
 uniform float uMirror,uPlane;
-uniform vec3 uVel; uniform float uShutterB;
 out vec3 vWorld; out vec3 vWN; out vec3 vLocal;
 void main(){
-  vec3 wl=uRot*aPos;
-  /* object blur: smear the sphere along its velocity like a finite exposure.
-     The swept path over the shutter becomes an ellipsoid: leading edge stays
-     at the true leading edge, the trail stretches behind by the same amount. */
-  if(uShutterB>0.0){
-    float sp=length(uVel);
-    if(sp>0.4){
-      float path=min(sp*uShutterB,uR*4.0);
-      vec3 dirW=uVel/sp;
-      vec3 dl=transpose(uRot)*dirW;
-      wl+=dirW*(dot(aPos,dl)*path*0.5/uR);
-      vec3 w=uPos+wl*uR-dirW*path*0.5;
-      vLocal=aPos; vWN=wl; vWorld=w;
-      if(uMirror>0.5) w.y=2.0*uPlane-w.y;
-      gl_Position=uVP*vec4(w,1.0);
-      return;
-    }
-  }
-  vec3 w=uPos+wl*uR;
+  /* Keep the actual sphere and its normals intact. Motion is integrated in
+     screen space from the current and previous rigid transforms. */
+  vec3 wl=uRot*aPos, w=uPos+wl*uR;
   vLocal=aPos; vWN=wl; vWorld=w;
   if(uMirror>0.5) w.y=2.0*uPlane-w.y;
   gl_Position=uVP*vec4(w,1.0);
@@ -553,11 +552,10 @@ void main(){
   o=vec4(tonemap(c)*a,a);
 }`;
 
-/* ---- Post-process: camera motion blur + lens effects ----
-   True motion blur: each pixel's world point is rebuilt from its depth and
-   reprojected with the previous frame's view-projection, giving the exact
-   screen-space motion vector (rotation *and* translation of the camera).
-   Sky has no depth, so its distance is clamped – there, rotation dominates. */
+/* ---- Motion vectors and post-process ----
+   Ball motion is reconstructed from two rigid transforms, while the camera
+   is reprojected from depth. Vectors are packed in pixels with 12 bits per
+   component, so small movements remain precise even in an RGBA8 target. */
 const POST_VS = HDR + `
 out vec2 vNdc;
 void main(){
@@ -565,37 +563,115 @@ void main(){
   vNdc=p*2.0-1.0;
   gl_Position=vec4(vNdc,1.0,1.0);
 }`;
-const POST_FS = HDR + `
+const MOTION_VS = HDR + `
+layout(location=0) in vec3 aPos;
+uniform mat4 uVP,uPrevVP; uniform mat3 uRot,uPrevRot;
+uniform vec3 uPos,uPrevPos; uniform float uR;
+out vec4 vNow,vOld;
+void main(){
+  vec3 p=uPos+(uRot*aPos)*uR, old=uPrevPos+(uPrevRot*aPos)*uR;
+  vNow=uVP*vec4(p,1.0); vOld=uPrevVP*vec4(old,1.0);
+  gl_Position=vNow;
+}`;
+const MOTION_FS = HDR + `
+in vec4 vNow,vOld; out vec4 o; uniform vec2 uRes;
+void main(){
+  if(vOld.w<=0.001){o=vec4(0.0);return;}
+  vec2 pixels=(vNow.xy/vNow.w-vOld.xy/vOld.w)*0.5*uRes;
+  vec2 q=floor(clamp(pixels/128.0+0.5,0.0,1.0)*4095.0+0.5);
+  vec2 hi=floor(q/256.0), lo=q-hi*256.0;
+  o=vec4(lo.x,lo.y,hi.x*16.0+hi.y,255.0)/255.0;
+}`;
+const MOTION_DECODE = `
+vec2 motionPixels(vec4 v){
+  vec3 b=floor(v.rgb*255.0+0.5);
+  vec2 hi=vec2(floor(b.z/16.0),mod(b.z,16.0));
+  return ((b.xy+hi*256.0)/4095.0-0.5)*128.0;
+}
+`;
+/* One max vector per 8x8 tile. The neighbouring tiles in the resolve allow
+   a moving silhouette to cover its trail instead of blurring only its centre. */
+const MOTION_TILE_FS = HDR + MOTION_DECODE + `
+out vec4 o; uniform sampler2D uVelocity; uniform ivec2 uSize;
+void main(){
+  ivec2 base=ivec2(gl_FragCoord.xy)*8; vec4 best=vec4(0.0); float bestLen=0.0;
+  for(int y=0;y<8;y++) for(int x=0;x<8;x++){
+    ivec2 p=base+ivec2(x,y); if(any(greaterThanEqual(p,uSize))) continue;
+    vec4 v=texelFetch(uVelocity,p,0); if(v.a<0.5) continue;
+    vec2 m=motionPixels(v); float len=dot(m,m);
+    if(len>bestLen){best=v;bestLen=len;}
+  }
+  o=best;
+}`;
+const POST_FS = HDR + MOTION_DECODE + `
 in vec2 vNdc; out vec4 o;
-uniform sampler2D uScene,uDepth;
-uniform vec2 uRes,uNF,uTanAsp;
+uniform sampler2D uScene,uDepth,uVelocity,uMotionTile;
+uniform vec2 uRes,uNF,uTanAsp,uTileRes;
 uniform vec3 uCam,uCamF,uCamR,uCamU;
 uniform mat4 uPrevVP;
-uniform float uMB,uCA,uVig;
+uniform float uMB,uCA,uVig,uHasVelocity;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
-vec3 tap(vec2 p,vec2 ca){return vec3(texture(uScene,p-ca).r,texture(uScene,p).g,texture(uScene,p+ca).b);}
+float sceneZ(float d){return d>=0.999999?600.0:min(linZ(d),600.0);}
+vec2 limitMotion(vec2 v){float l=length(v);return v*min(1.0,22.0/max(l,0.001));}
 void main(){
   vec2 uv=vNdc*0.5+0.5;
-  vec2 ca=(uv-0.5)*uCA;                    /* chromatic aberration grows to the edges */
-  vec3 c;
+  vec3 base=texture(uScene,uv).rgb, c=base;
   if(uMB>0.001){
+    float depth=sceneZ(texture(uDepth,uv).r);
     vec3 rd=normalize(uCamF+vNdc.x*uTanAsp.x*uTanAsp.y*uCamR+vNdc.y*uTanAsp.x*uCamU);
-    float d=texture(uDepth,uv).r;
-    float vw=min(linZ(d),600.0);            /* sky clamped to 600 m – rotation only */
-    vec3 wp=uCam+rd*(vw/max(dot(rd,uCamF),0.2));
+    vec3 wp=uCam+rd*(depth/max(dot(rd,uCamF),0.2));
     vec4 pc=uPrevVP*vec4(wp,1.0);
-    vec2 duv=vec2(0.0);
-    if(pc.w>0.01){
-      vec2 pN=pc.xy/pc.w;
-      duv=clamp((uv-(pN*0.5+0.5))*uMB,vec2(-0.035),vec2(0.035));
+    vec2 camera=pc.w>0.01?(uv-(pc.xy/pc.w*0.5+0.5))*uRes:vec2(0.0);
+    vec4 own=uHasVelocity>0.5?texture(uVelocity,uv):vec4(0.0);
+    bool object=own.a>0.5;
+    vec2 motion=object?motionPixels(own):camera;
+    bool neighbour=false;
+    if(!object&&uHasVelocity>0.5){
+      vec2 tile=floor(uv*uTileRes);
+      float best=dot(motion,motion)*1.69;
+      for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
+        vec2 tc=clamp(tile+vec2(float(x),float(y)),vec2(0.0),uTileRes-1.0);
+        vec4 v=texture(uMotionTile,(tc+0.5)/uTileRes);
+        if(v.a>0.5){vec2 m=motionPixels(v);float l=dot(m,m);if(l>best){best=l;motion=m;neighbour=true;}}
+      }
     }
-    c=vec3(0.0);
-    for(int i=0;i<8;i++) c+=tap(uv-duv*float(i)/7.0,ca);
-    c/=8.0;
-  } else {
-    c=tap(uv,ca);
+    motion=limitMotion(motion*uMB);
+    if(length(motion)>0.65){
+      vec3 sum=base*1.5; float total=1.5;
+      for(int i=0;i<12;i++){
+        float t=(float(i)+0.5)/12.0-0.5;
+        vec2 q=uv+motion*t/uRes;
+        if(any(lessThan(q,vec2(0.0)))||any(greaterThan(q,vec2(1.0)))) continue;
+        float z=sceneZ(texture(uDepth,q).r), tolerance=max(0.3,depth*0.025);
+        float same=1.0-smoothstep(tolerance,tolerance*2.5,abs(z-depth));
+        vec4 sv=uHasVelocity>0.5?texture(uVelocity,q):vec4(0.0);
+        bool moving=sv.a>0.5;
+        float weight=same;
+        if(neighbour){
+          /* Only the moving foreground can cover a static background. */
+          weight=0.0;
+          if(moving&&z<=depth+tolerance){
+            vec2 sm=motionPixels(sv);
+            float alignment=max(dot(normalize(sm+vec2(0.0001)),normalize(motion)),0.0);
+            weight=alignment*(0.55+0.45*same);
+          }
+        } else if(object&&z>depth+tolerance){
+          /* A little background at the leading edge softens the silhouette,
+             without pulling an unrelated distant surface through the ball. */
+          weight=0.12;
+        }
+        weight*=1.0-0.8*abs(t);
+        sum+=texture(uScene,q).rgb*weight; total+=weight;
+      }
+      c=sum/total;
+    }
   }
-  c*=1.0-uVig*smoothstep(0.38,0.92,length(uv-0.5));   /* gentle lens vignette */
+  if(uCA>0.0){
+    vec2 ca=(uv-0.5)*uCA;
+    c.r+=(texture(uScene,clamp(uv-ca,0.0,1.0)).r-base.r)*0.65;
+    c.b+=(texture(uScene,clamp(uv+ca,0.0,1.0)).b-base.b)*0.65;
+  }
+  c*=1.0-uVig*smoothstep(0.38,0.92,length(uv-0.5));
   o=vec4(c,1.0);
 }`;
 
@@ -619,4 +695,6 @@ const pBall=program(BALL_VS,BALL_FS);
 const pPart=program(PART_VS,PART_FS);
 const pPrecip=program(PRECIP_VS,PRECIP_FS);
 const pPost=program(POST_VS,POST_FS);
+const pMotion=program(MOTION_VS,MOTION_FS);
+const pMotionTile=program(POST_VS,MOTION_TILE_FS);
 

@@ -97,7 +97,7 @@ const CONTROLS=[
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
   {tab:'system',t:'toggle',k:'hq',label:'Improved graphics mode',sub:'Full-resolution reflections, denser spray and rain, finer water detail'},
   {tab:'system',t:'range',k:'splash',label:'Splash detail',min:0.3,max:1.5,step:0.05,fmt:pct},
-  {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Camera blur and smeared fast-moving objects'},
+  {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Depth-aware camera and object motion'},
   {tab:'system',t:'range',k:'blur',label:'Blur strength',min:0.2,max:2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'system',t:'toggle',k:'lensFx',label:'Lens effects',sub:'Chromatic aberration and vignette'},
   {tab:'system',t:'toggle',k:'stats',label:'Performance stats',sub:'Frame rate, balls, resolution'},
@@ -166,7 +166,7 @@ function apply(k){
     case 'orbit': autoOrbit=v; break;
     case 'follow': followBall=v; break;
     case 'quality': setQuality(v); break;
-    case 'hq': hqMode=v; setQuality(quality); if(curW>0) makeTargets(curW,curH); break;
+    case 'hq': hqMode=v; setQuality(quality); if(curW>0) makeTargets(curW,curH); havePrev=false; break;
     case 'splash': splashAmt=v; break;
     case 'motionBlur': motionBlurOn=v; break;
     case 'blur': blurStrength=v; break;
@@ -241,7 +241,7 @@ function buildSeg(c){
   if(c.cols) seg.style.setProperty('--cols',c.cols);
   const btns=c.opts.map(o=>{ const b=el('button','seg-b'); b.type='button'; b.textContent=o[1]; b.onclick=()=>userSet(c.k,o[0]); seg.appendChild(b); return b; });
   (binders[c.k]=binders[c.k]||[]).push(v=>{
-    c.opts.forEach((o,i)=>btns[i].classList.toggle('on',o[0]===v));
+    c.opts.forEach((o,i)=>{btns[i].classList.toggle('on',o[0]===v);btns[i].setAttribute('aria-pressed',o[0]===v?'true':'false');});
     if(c.k==='weather') $('wxCustom').textContent=v==='custom'?'Custom':'';
   });
   w.appendChild(lab); w.appendChild(seg); return w;
@@ -296,6 +296,7 @@ function moveTabInd(){
 }
 function showTab(id){
   curTab=id;
+  $('cond').setAttribute('aria-expanded',$('panel').classList.contains('open')&&id==='sky'?'true':'false');
   for(const k in tabSecs){ tabSecs[k].classList.toggle('on',k===id); tabBtns[k].classList.toggle('on',k===id); }
   pBody.scrollTop=0; moveTabInd();
   tabBtns[id].scrollIntoView({behavior:reduceMotion?'auto':'smooth',inline:'nearest',block:'nearest'});
@@ -303,6 +304,8 @@ function showTab(id){
 function setPanel(open,tab){
   const p=$('panel'); p.classList.toggle('open',open); p.setAttribute('aria-hidden',open?'false':'true');
   document.body.classList.toggle('panel-open',open); $('bSet').classList.toggle('on',open);
+  $('bSet').setAttribute('aria-expanded',open?'true':'false');
+  $('cond').setAttribute('aria-expanded',open&&(!tab||tab==='sky')&&curTab==='sky'?'true':'false');
   if(open){ if($('dock').classList.contains('hidden')&&innerWidth>=900) setDock(true); showTab(tab||curTab); setTimeout(moveTabInd,80); hideHint(); }
   setTimeout(moveChipInd,700);
 }
@@ -320,7 +323,7 @@ function moveChipInd(){
 function selectType(i,quiet){
   setVal('type',i); selType=i;
   const chips=chipsEl.querySelectorAll('.chip');
-  chips.forEach((c,k)=>c.classList.toggle('on',k===i));
+  chips.forEach((c,k)=>{c.classList.toggle('on',k===i);c.setAttribute('aria-pressed',k===i?'true':'false');});
   moveChipInd();
   if(!quiet) chips[i].scrollIntoView({behavior:reduceMotion?'auto':'smooth',inline:'nearest',block:'nearest'});
 }
@@ -371,7 +374,7 @@ function ballRain(){
 function clearAll(){ const n=balls.length; balls.length=0; grab=null; clearSplashes(); replay($('bClear'),'fired'); toast(n?'Cleared '+n+' ball'+(n>1?'s':''):'Nothing to clear'); }
 function toggleSlow(){
   slowMo=!slowMo; applySpeed();
-  $('bSlow').classList.toggle('on',slowMo); document.body.classList.toggle('slow',slowMo);
+  $('bSlow').classList.toggle('on',slowMo); $('bSlow').setAttribute('aria-pressed',slowMo?'true':'false'); document.body.classList.toggle('slow',slowMo);
 }
 function togglePause(){
   paused=!paused; document.body.classList.toggle('paused',paused);
@@ -522,6 +525,7 @@ function updateStats(fps,nBalls,res,hs){
   if(env.dayCycle>0&&!paused){ S.hour=Math.min(23.95,Math.round(env.hour*20)/20); refresh('hour'); saveSoon(); }
   const desc=skyDescription(), icon=skyIcon(), temp=Math.round(envS.airT)+'°', st=sunTimes(S.season);
   putIcon('condIc',icon); put('condTemp',temp); put('condTxt',desc); put('condTime',fmtHour(env.hour));
+  $('cond').setAttribute('aria-label',desc+', '+temp+', '+fmtHour(env.hour)+'. Open weather settings');
   putIcon('infoIc',icon); put('infoTitle',desc); put('infoSub',SEASONS[S.season].name+' · '+fmtHour(env.hour)+' · '+dayPhase(env.hour));
   put('infoTemp',temp+'C'); put('infoSea',Math.round(envS.water)+'°C');
   put('infoWind',Math.round(envS.wind*1.944)+' kn '+compass(S.windFrom));

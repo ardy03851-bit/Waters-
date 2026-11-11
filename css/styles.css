@@ -5,7 +5,7 @@
 
 :root{
   --accent:#6ee7ff; --accent2:#4f8dff; --accent3:#a78bfa;
-  --ink:#f2fbff; --ink-dim:rgba(235,248,255,.66);
+  --ink:#f2fbff; --ink-dim:rgba(235,248,255,.76);
   --stroke:rgba(255,255,255,.18);
   --spring:cubic-bezier(.2,1.35,.35,1); --smooth:cubic-bezier(.22,.9,.24,1);
   --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
@@ -16,6 +16,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#06121c;overscroll-beh
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   color:var(--ink);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-font-smoothing:antialiased}
 button{font:inherit;color:inherit}
+/* A quiet but unmistakable keyboard focus ring, including icon-only controls. */
+button:focus-visible,input:focus-visible{outline:2px solid #b7efff;outline-offset:3px}
 #gl{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
 
 /* ---------- the glass material ---------- */
@@ -23,7 +25,7 @@ button{font:inherit;color:inherit}
   --r:26px; position:relative; isolation:isolate; border-radius:var(--r);
   background:
     linear-gradient(135deg,rgba(255,255,255,.20),rgba(255,255,255,.04) 40%,rgba(110,231,255,.08) 100%),
-    rgba(8,26,46,.36);
+    rgba(8,26,46,.46);
   -webkit-backdrop-filter:blur(26px) saturate(1.9) brightness(1.05);
           backdrop-filter:blur(26px) saturate(1.9) brightness(1.05);
   box-shadow:
@@ -52,6 +54,10 @@ button{font:inherit;color:inherit}
 }
 @keyframes rim{to{--ang:360deg}}
 @keyframes sheen{0%,55%{background-position:0 0,160% 0}85%,100%{background-position:0 0,-60% 0}}
+
+@media (prefers-contrast:more){
+  .glass{background:rgba(5,21,37,.9);--ink-dim:#e5f5ff}
+}
 
 /* ---------- top bar ---------- */
 #top{position:fixed;top:max(12px,var(--sat));left:max(14px,var(--sal));right:max(14px,var(--sar));

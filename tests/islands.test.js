@@ -10,8 +10,11 @@ const vm=require('node:vm');
 
 function fixture(){
   const deleted={buffers:0,vaos:0};
+  let boundBuffer=null;
   const gl=new Proxy({
     createTexture:()=>({}),createBuffer:()=>({}),createVertexArray:()=>({}),
+    bindBuffer:(_target,buffer)=>{boundBuffer=buffer;},
+    bufferData:(_target,data)=>{if(boundBuffer&&ArrayBuffer.isView(data)) boundBuffer.data=Array.from(data);},
     deleteBuffer:()=>deleted.buffers++,deleteVertexArray:()=>deleted.vaos++,
     getExtension:()=>null
   },{get(target,key){
@@ -92,9 +95,21 @@ test('archipelagos are reproducible, separated, collidable, and storm-driven',()
 
   api.generateIslands(123456);
   const first=api.islands.land.map(i=>[i.x,i.z,api.islandGround(i.x,i.z)]);
+  const firstTrees=api.islands.trees.buffer.data.slice();
   api.generateIslands(123456);
   const second=api.islands.land.map(i=>[i.x,i.z,api.islandGround(i.x,i.z)]);
   assert.deepEqual(first,second,'same seed must recreate the same terrain');
+  assert.deepEqual(firstTrees,api.islands.trees.buffer.data,'tree placement and variations are seeded too');
+  assert.ok(api.islands.treeCount>100,'the archipelago has varied forest clusters');
+  for(let i=0;i<firstTrees.length;i+=8){
+    const [x,y,z,height]=firstTrees.slice(i,i+4);
+    assert.ok(height>=1.8&&height<=5.2,'trees vary in height');
+    assert.ok(Math.abs(y+height*0.025-api.islandGround(x,z))<0.001,'each trunk is rooted on the sampled terrain');
+    for(let j=0;j<i;j+=8){
+      const dx=x-firstTrees[j],dz=z-firstTrees[j+2],min=0.62+0.08*Math.min(height,firstTrees[j+3]);
+      assert.ok(dx*dx+dz*dz>=min*min-0.0001,'tree trunks do not overlap');
+    }
+  }
   assert.ok(deleted.vaos>=6&&deleted.buffers>=11,'regeneration releases old GPU meshes');
 
   const I=api.islands.land[0],h=api.islandGround(I.x,I.z);
