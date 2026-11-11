@@ -31,6 +31,7 @@ function fixture(){
   const noise=ocean.slice(ocean.indexOf('function hash2('),ocean.indexOf('function makeDetailTexture('));
   const islands=fs.readFileSync(path.join(root,'js/islands.js'),'utf8');
   const details=fs.readFileSync(path.join(root,'js/island-details.js'),'utf8');
+  const scenery=fs.readFileSync(path.join(root,'js/island-scenery.js'),'utf8');
   const physics=fs.readFileSync(path.join(root,'js/physics.js'),'utf8');
   vm.runInContext(`
     const G=9.81, RHO_W=1000, RHO_A=1.2;
@@ -42,14 +43,15 @@ function fixture(){
     ${noise}
     ${islands}
     ${details}
+    ${scenery}
     ${physics}
-    globalThis.api={islands,islandConfig,generateIslands,removeIslands,islandGround,collideIsland,updateIslandSurf,rebuildIslandTrees,rebuildIslandDetails,
+    globalThis.api={islands,islandConfig,islandProfile,generateIslands,removeIslands,islandGround,collideIsland,updateIslandSurf,rebuildIslandTrees,rebuildIslandDetails,
       setConditions(s,storm){sea=s;sky.storm=storm;},
       tick(dt){simT+=dt;updateIslandSurf(dt);},
       resetTime(){simT=0;islands.nextCrash=0;for(const p of islands.coast){p.last=0;p.cool=0;}},
       enableFastLayout(){
         makeIslandMesh=I=>{I.vao=null;I.vb=null;I.ib=null;};
-        makeIslandMap=()=>{}; makeIslandTrees=()=>{}; makeIslandCoast=()=>{}; makeIslandDetails=()=>{};
+        makeIslandMap=()=>{}; makeIslandTrees=()=>{}; makeIslandCoast=()=>{}; makeIslandDetails=()=>{}; makeIslandScenery=()=>{};
       }
     };
   `,ctx,{timeout:20000});
@@ -232,12 +234,112 @@ test('extreme coastal controls keep islands visible and detail budgets finite',(
   const {api}=fixture();
   for(const [seed,options] of [
     [19,{style:'coves',relief:0.6,coast:1.2,beach:1.5,trees:1.7,treeScale:1.4,grass:1.5,rocks:1.5}],
-    [0xf02a33,{style:'highlands',relief:1.45,coast:0.5,beach:0.5,trees:0.4,grass:0.3,rocks:0.3}]
+    [0xf02a33,{style:'highlands',relief:1.45,coast:0.5,beach:0.5,trees:0.4,grass:0.3,rocks:0.3}],
+    [0xe12003,{biome:'alpine',style:'highlands',features:1.5,relief:1.45,coast:0.5,trees:0.4,grass:0.3,rocks:0.3}]
   ]){
     api.generateIslands(seed,options);
     assert.equal(landComponents(api).length,5,`extreme ${options.style} settings leave five separate islands`);
     assert.ok(api.islands.land.every(I=>api.islandGround(I.x,I.z)>0),'each island retains dry ground');
     assert.ok(api.islands.treeCount<1000&&api.islands.details.grass.count<3000&&api.islands.details.rocks.count<400);
-    assert.ok(api.islands.land.every(I=>I.h.every(Number.isFinite)),'heightfields stay finite');
+    assert.ok(api.islands.land.every(I=>I.h.every(h=>Number.isFinite(h)&&h<=28)),'heightfields stay finite and within the shoreline map range');
   }
+});
+
+test('each biome changes the landform and ecology without breaking collision or water channels',()=>{
+  const {api}=fixture(), seed=0x1234abcd, shapes=new Set();
+  let layout=null;
+  for(const biome of ['temperate','tropical','volcanic','alpine','desert']){
+    api.generateIslands(seed,{biome,count:3});
+    const land=api.islands.land, scenery=api.islands.scenery;
+    assert.ok(land.every(I=>I.biome===biome&&I.h.every(Number.isFinite)));
+    assert.equal(landComponents(api).length,3,`${biome} keeps its islands separate`);
+    const positions=land.map(I=>[I.x,I.z,I.rx,I.rz]);
+    if(layout) assert.deepEqual(positions,layout,'biome changes do not reshuffle the layout'); else layout=positions;
+    shapes.add(land.map(I=>api.islandGround(I.x,I.z).toFixed(3)).join(','));
+    for(const I of land){
+      const h=api.islandGround(I.x,I.z);
+      assert.ok(h>0,`${biome} keeps a dry centre`);
+      const b={x:I.x,y:h+0.15,z:I.z,vx:0,vy:-4,vz:0,wx:0,wy:0,wz:0,r:0.5,e:0.5,type:0};
+      api.collideIsland(b,1/240);
+      assert.ok(b.y>h+0.15&&Number.isFinite(b.y+b.vy),`${biome} remains collidable`);
+    }
+    if(biome==='tropical') assert.ok(scenery.palms.count>10&&api.islands.treeCount===0,'tropics grow palms, not pines');
+    if(biome==='desert'){
+      assert.ok(scenery.cacti.count>5&&scenery.cascades.count===0,'arid terrain grows cacti without cascades');
+      const I=land[0],withFeatures=api.islandProfile(I,I.x,I.z);I.features=0;
+      assert.notEqual(api.islandProfile(I,I.x,I.z),withFeatures,'landform detail changes the actual heightfield');I.features=1;
+    }
+    if(biome==='volcanic') assert.equal(scenery.cascades.count,0,'dry volcanic terrain has no cascades');
+    if(biome==='alpine') assert.ok(api.islands.treeCount>0,'alpine forests retain pines');
+    assert.ok(scenery.palms.count<200&&scenery.cacti.count<150&&scenery.flowers.count<600&&scenery.spires.count<25&&scenery.cascades.count<1500);
+  }
+  assert.equal(shapes.size,5,'biomes have materially different heightfields, not just colours');
+  api.generateIslands(seed,{biome:'mixed'});
+  assert.equal(new Set(api.islands.land.map(I=>I.biome)).size,5,'mixed mode assigns all five biomes without duplicates');
+  const first=api.islands.land.map(I=>I.biome);
+  api.generateIslands(seed,{biome:'mixed'});
+  assert.deepEqual(api.islands.land.map(I=>I.biome),first,'mixed assignment is seeded');
+  const invalid=api.islandConfig({biome:'bogus',features:Infinity,flowers:-3,landmarks:8,cascades:NaN});
+  assert.equal(invalid.biome,'temperate');assert.equal(invalid.features,1);assert.equal(invalid.flowers,0);
+  assert.equal(invalid.landmarks,1.5);assert.equal(invalid.cascades,1);
+});
+
+test('scenery is rooted, reproducible, independently adjustable and released on removal',()=>{
+  const {api,deleted}=fixture(), seed=0x2384d22;
+  const options=api.islandConfig({biome:'tropical',count:3});
+  api.generateIslands(seed,options);
+  const scenery=api.islands.scenery;
+  assert.ok(scenery.palms.count>0&&scenery.flowers.count>0&&scenery.spires.count>0);
+  const palmVariants=scenery.palms.instances.data.filter((_v,i)=>i%8===7);
+  assert.ok(palmVariants.some(v=>v<0.5)&&palmVariants.some(v=>v>=0.5),'both palm silhouettes occur in the seeded planting');
+  assert.ok(scenery.cascades.paths.length>0,'suitable wet islands receive cascades');
+  for(const item of [scenery.palms,scenery.flowers,scenery.spires]){
+    const data=item.instances.data;
+    for(let i=0;i<data.length;i+=8)
+      assert.ok(Math.abs(data[i+1]+0.04-api.islandGround(data[i],data[i+2]))<0.0002,'scenery is rooted in the rendered/collision heightfield');
+  }
+  const waterfall=scenery.cascades.vb.data;
+  for(let i=0;i<waterfall.length;i+=6)
+    assert.ok(Math.abs(waterfall[i+1]-0.12-api.islandGround(waterfall[i],waterfall[i+2]))<0.0002,'cascade strips follow terrain');
+  for(const path of scenery.cascades.paths){
+    assert.ok(path[0][2]-path.at(-1)[2]>2.2,'each cascade follows a descending course');
+  }
+  const snapshot={palms:scenery.palms.instances.data.slice(),flowers:scenery.flowers.instances.data.slice(),
+    spires:scenery.spires.instances.data.slice(),waterfall:waterfall.slice(),rocks:api.islands.details.rocks.instances.data.slice()};
+  api.generateIslands(seed,options);
+  for(const name of ['palms','flowers','spires']) assert.deepEqual(api.islands.scenery[name].instances.data,snapshot[name]);
+  assert.deepEqual(api.islands.scenery.cascades.vb.data,snapshot.waterfall);
+  api.rebuildIslandDetails(api.islandConfig({biome:'tropical',count:3,flowers:0}));
+  assert.equal(api.islands.scenery.flowers.count,0);
+  assert.deepEqual(api.islands.scenery.palms.instances.data,snapshot.palms);
+  assert.deepEqual(api.islands.scenery.spires.instances.data,snapshot.spires);
+  assert.deepEqual(api.islands.scenery.cascades.vb.data,snapshot.waterfall);
+  assert.deepEqual(api.islands.details.rocks.instances.data,snapshot.rocks);
+  api.rebuildIslandTrees(api.islandConfig({biome:'tropical',count:3,trees:0,flowers:0,landmarks:0,cascades:0}));
+  assert.equal(api.islands.scenery.palms.count,0);assert.equal(api.islands.scenery.spires.count,0);assert.equal(api.islands.scenery.cascades.count,0);
+  const old=deleted.vaos;
+  api.removeIslands();
+  assert.equal(api.islands.scenery,null);assert.ok(deleted.vaos>=old+5,'scenery VAOs are released');
+});
+
+test('mixed-biome assignments vary by seed and extreme procedural profiles stay bounded',()=>{
+  const {api}=fixture();api.enableFastLayout();const orders=new Set();
+  for(let k=0;k<128;k++){
+    const seed=Math.imul(k+17,0x9e3779b1)>>>0;
+    api.generateIslands(seed,{biome:'mixed',style:'highlands',relief:1.45,features:1.5});
+    const land=api.islands.land, order=land.map(I=>I.biome);
+    assert.equal(new Set(order).size,5);orders.add(order.join(','));
+    const volcano=land.find(I=>I.biome==='volcanic');
+    const profile=(u,v)=>api.islandProfile(volcano,volcano.x+volcano.cs*u*volcano.rx-volcano.sn*v*volcano.rz,
+      volcano.z+volcano.sn*u*volcano.rx+volcano.cs*v*volcano.rz);
+    const u=volcano.peakX*0.45,v=volcano.peakZ*0.45,centre=profile(u,v);
+    const rim=Array.from({length:16},(_,i)=>profile(u+Math.cos(i*Math.PI/8)*0.25,v+Math.sin(i*Math.PI/8)*0.25));
+    assert.ok(Math.max(...rim)>centre,`seed ${seed} retains a volcanic crater rim`);
+    for(const I of land) for(let u=-0.8;u<=0.8;u+=0.4) for(let v=-0.8;v<=0.8;v+=0.4){
+      const x=I.x+I.cs*u*I.rx-I.sn*v*I.rz,z=I.z+I.sn*u*I.rx+I.cs*v*I.rz;
+      const h=api.islandProfile(I,x,z);
+      assert.ok(Number.isFinite(h)&&h<=28,`seed ${seed} has a finite, map-safe ${I.biome} profile`);
+    }
+  }
+  assert.ok(orders.size>50,`seeded mixed islands should use many biome orders (${orders.size})`);
 });

@@ -60,7 +60,7 @@ async function drawFrames(page,count=1){
       result=await drawFrames(page,2);
       assert.equal(result.state,'running',result.detail);assert.equal(result.error,0);
       assert.ok(await page.evaluate(()=>motionDraws>0),'depth-aware motion blur still renders');
-      await page.evaluate(()=>{userSet('islands',true);userSet('hq',true);userSet('quality','low');Aqua.weather('storm');});
+      await page.evaluate(()=>{userSet('islandBiome','temperate');userSet('islands',true);userSet('hq',true);userSet('quality','low');Aqua.weather('storm');});
       await page.waitForFunction(()=>testUploads.length===5,null,{polling:100,timeout});
       result=await page.evaluate(()=>({seed:S.islandSeed,trees:islands.treeCount,land:islands.land.map(i=>[i.x,i.z]),refl:[rW,rH],size:[canvas.width,canvas.height],error:gl.getError()}));
       assert.ok(result.trees>10);assert.equal(result.error,0);assert.deepEqual(result.refl,result.size);
@@ -77,6 +77,63 @@ async function drawFrames(page,count=1){
       assert.equal(result.weather,'storm');assert.equal(result.fb,5);assert.equal(result.error,0);
       result=await drawFrames(page);assert.equal(result.state,'running',result.detail);assert.equal(result.error,0);
       console.log('PASS: ocean, islands, blur, screenshots, weather and saved settings');
+      await context.close();
+    }
+    {
+      const {context,page}=await makePage(browser,{},()=>{
+        window.testUploads=[];
+        const original=WebGL2RenderingContext.prototype.texImage2D;
+        WebGL2RenderingContext.prototype.texImage2D=function(...args){
+          const source=args[5];
+          if(args.length===6&&source&&(source instanceof HTMLImageElement||source instanceof HTMLCanvasElement)) testUploads.push([source.width,source.height]);
+          return original.apply(this,args);
+        };
+      });
+      await waitState(page,'running');
+      assert.equal(await page.evaluate(()=>S.islandBiome),'mixed','fresh installs start with a varied archipelago');
+      await page.evaluate(()=>{document.body.classList.remove('booting');userSet('quality','low');userSet('motionBlur',false);userSet('islands',true);setPanel(true,'islands');});
+      for(const [label,biome] of [['Tropical','tropical'],['Volcanic','volcanic'],['Alpine','alpine'],['Desert','desert'],['Mixed','mixed']]){
+        await page.getByRole('button',{name:label,exact:true}).click();
+        await page.waitForFunction(b=>islands.options.biome===b,biome,{polling:100,timeout});
+        const info=await page.evaluate(()=>({biomes:islands.land.map(I=>I.biome),palms:islands.scenery.palms.count,cacti:islands.scenery.cacti.count,
+          flowers:islands.scenery.flowers.count,trees:islands.treeCount,error:gl.getError()}));
+        if(biome==='mixed') assert.equal(new Set(info.biomes).size,5);
+        else assert.ok(info.biomes.every(b=>b===biome));
+        if(biome==='tropical') assert.ok(info.palms>0&&info.trees===0);
+        if(biome==='desert') assert.ok(info.cacti>0);
+        assert.equal(info.error,0);
+        const rendered=await drawFrames(page);assert.equal(rendered.state,'running',rendered.detail);assert.equal(rendered.error,0);
+      }
+      await page.waitForFunction(()=>testUploads.length===9,null,{polling:100,timeout});
+      await page.evaluate(()=>{window.beforeLand=islands.land[0];window.beforeDetails=islands.details;userSet('islandFlowers',0);});
+      await page.waitForFunction(()=>islands.options.flowers===0&&islands.scenery.flowers.count===0,null,{polling:100,timeout});
+      assert.ok(await page.evaluate(()=>islands.land[0]===beforeLand&&islands.details===beforeDetails),'scenery-only changes do not rebuild land, grass or rocks');
+      await page.evaluate(()=>{window.beforeScenery=islands.scenery;userSet('islandGrass',0.5);});
+      await page.waitForFunction(()=>islands.options.grass===0.5,null,{polling:100,timeout});
+      assert.ok(await page.evaluate(()=>islands.scenery===beforeScenery),'grass-only changes retain scenery buffers');
+      await page.evaluate(()=>{userSet('islandFeatures',0.75);userSet('islandFlowers',0.4);userSet('islandLandmarks',0.5);userSet('islandCascades',0);});
+      await page.waitForFunction(()=>islands.options.features===0.75&&islands.options.flowers===0.4&&islands.options.landmarks===0.5&&islands.scenery.cascades.count===0,null,{polling:100,timeout});
+      const before=await page.evaluate(()=>({seed:S.islandSeed,biomes:islands.land.map(I=>I.biome)}));
+      await page.waitForFunction(()=>{const s=JSON.parse(localStorage.getItem('aqua.settings.v2')||'{}');return s.islandBiome==='mixed'&&s.islandFeatures===0.75&&s.islandFlowers===0.4&&s.islandLandmarks===0.5&&s.islandCascades===0;},null,{polling:100,timeout});
+      await page.reload({waitUntil:'domcontentloaded',timeout});await waitState(page,'running');
+      const after=await page.evaluate(()=>({seed:S.islandSeed,biomes:islands.land.map(I=>I.biome),options:islands.options,error:gl.getError()}));
+      assert.equal(after.seed,before.seed);assert.deepEqual(after.biomes,before.biomes);assert.equal(after.options.biome,'mixed');
+      assert.equal(after.options.features,0.75);assert.equal(after.options.flowers,0.4);assert.equal(after.options.landmarks,0.5);assert.equal(after.options.cascades,0);assert.equal(after.error,0);
+      await page.waitForFunction(()=>testUploads.length===9,null,{polling:100,timeout});
+      await page.evaluate(()=>{userSet('season',3);setWeather('storm');userSet('motionBlur',true);userSet('hq',true);});
+      const rendered=await drawFrames(page,2);assert.equal(rendered.state,'running',rendered.detail);assert.equal(rendered.error,0);
+      console.log('PASS: all biomes render, including winter storm and blur; seeded settings survive reload');
+      await context.close();
+    }
+    {
+      const {context,page}=await makePage(browser,{},()=>{
+        localStorage.setItem('aqua.settings.v2',JSON.stringify({islands:true,islandSeed:98765,islandStyle:'coves',islandTrees:0.5,quality:'low'}));
+      });
+      await waitState(page,'running');
+      const saved=await page.evaluate(()=>({biome:S.islandBiome,seed:S.islandSeed,style:S.islandStyle,trees:S.islandTrees,land:islands.land.map(I=>I.biome),error:gl.getError()}));
+      assert.equal(saved.biome,'temperate');assert.equal(saved.seed,98765);assert.equal(saved.style,'coves');assert.equal(saved.trees,0.5);
+      assert.ok(saved.land.every(b=>b==='temperate'));assert.equal(saved.error,0);
+      console.log('PASS: pre-biome saved settings retain their temperate ecology');
       await context.close();
     }
     {
@@ -155,7 +212,7 @@ async function drawFrames(page,count=1){
       await waitState(page,'running');
       const size=await page.evaluate(()=>({safe:AquaBoot.safeMode,w:canvas.width,h:canvas.height,limit:targetPixels}));
       assert.equal(size.safe,true);assert.ok(size.w*size.h<=size.limit);
-      await page.evaluate(()=>document.body.classList.remove('booting'));
+      await page.evaluate(()=>{document.body.classList.remove('booting');userSet('islandBiome','temperate');});
       await page.locator('#bIsland').tap();
       await page.waitForFunction(()=>islands.active&&islands.treeCount>10&&testUploads.length===5,null,{polling:100,timeout});
       assert.ok(await page.evaluate(()=>testUploads.every(([w,h])=>w<=512&&h<=512)));
@@ -163,7 +220,12 @@ async function drawFrames(page,count=1){
       await page.locator('#bSet').tap();assert.ok(await page.locator('#panel').evaluate(el=>el.classList.contains('open')));
       await page.evaluate(()=>showTab('system'));
       assert.match(await page.locator('#pBody').innerText(),/Low-memory mode is active/);
-      console.log('PASS: mobile touch, low-memory island textures and settings');
+      await page.evaluate(()=>showTab('islands'));
+      await page.getByRole('button',{name:'Mixed',exact:true}).tap();
+      await page.waitForFunction(()=>islands.options.biome==='mixed'&&testUploads.length===9,null,{polling:100,timeout});
+      assert.ok(await page.evaluate(()=>testUploads.every(([w,h])=>w<=512&&h<=512)),'new materials also respect low-memory limits');
+      const mixed=await drawFrames(page);assert.equal(mixed.state,'running',mixed.detail);assert.equal(mixed.error,0);
+      console.log('PASS: mobile touch, mixed biomes, low-memory textures and settings');
       await context.close();
     }
   }finally{await browser.close();}

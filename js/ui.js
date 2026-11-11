@@ -21,8 +21,9 @@ function toast(msg){
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
   type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, islandSeed:0,
-  islandStyle:'wild', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1,
-  islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandBirds:true, islandWind:1, islandSurf:1,
+  islandStyle:'wild', islandBiome:'mixed', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1, islandFeatures:1,
+  islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandFlowers:1, islandLandmarks:1, islandCascades:1,
+  islandBirds:true, islandWind:1, islandSurf:1,
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
   gravity:9.81, speed:1, bounce:1, water:1,
   fov:50, orbit:false, follow:false,
@@ -74,15 +75,20 @@ const CONTROLS=[
 
   {tab:'islands',t:'toggle',k:'islands',label:'Island archipelago',sub:'Generate a coast to explore'},
   {tab:'islands',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
+  {tab:'islands',t:'seg',k:'islandBiome',label:'Biome',cols:3,opts:[['temperate','Temperate'],['tropical','Tropical'],['volcanic','Volcanic'],['alpine','Alpine'],['desert','Desert'],['mixed','Mixed']]},
   {tab:'islands',t:'seg',k:'islandStyle',label:'Coast type',opts:[['wild','Wild'],['coves','Coves'],['highlands','Highlands']]},
   {tab:'islands',t:'seg',k:'islandCount',label:'Island count',opts:[[3,'3'],[4,'4'],[5,'5']]},
   {tab:'islands',t:'range',k:'islandRelief',label:'Mountain height',min:0.6,max:1.45,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandCoast',label:'Coastline detail',min:0.5,max:1.2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandBeach',label:'Coves and beaches',min:0.5,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
-  {tab:'islands',t:'range',k:'islandTrees',label:'Forest density',min:0,max:1.7,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandFeatures',label:'Landform detail',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandTrees',label:'Trees and desert plants',min:0,max:1.7,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandTreeScale',label:'Tree height',min:0.7,max:1.4,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandGrass',label:'Coastal grasses',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandRocks',label:'Boulders',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandFlowers',label:'Wildflowers',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandLandmarks',label:'Rock formations',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandCascades',label:'Cascades',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'toggle',k:'islandBirds',label:'Seabirds',sub:'Flocks shelter during storms and at night'},
   {tab:'islands',t:'range',k:'islandWind',label:'Vegetation wind response',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandSurf',label:'Cliff surf',min:0,max:1.5,step:0.05,fmt:pct},
@@ -143,15 +149,21 @@ function loadSettings(){
   const s=Object.assign({},DEFAULTS);
   try{
     const raw=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
-    if(raw&&typeof raw==='object') for(const k in DEFAULTS) if(k in raw&&validValue(k,raw[k])) s[k]=raw[k];
+    if(raw&&typeof raw==='object'){
+      /* Pre-biome saves represented temperate coasts. New installs start in
+         Mixed, while existing players keep their familiar saved ecology. */
+      if(!Object.prototype.hasOwnProperty.call(raw,'islandBiome')) s.islandBiome='temperate';
+      for(const k in DEFAULTS) if(k in raw&&validValue(k,raw[k])) s[k]=raw[k];
+    }
   }catch(e){}
   return s;
 }
 const S=loadSettings();
 let saveTimer=0, islandBuildTimer=0, islandRebuildMask=0, settingsBooting=true;
 function currentIslandOptions(){
-  return {style:S.islandStyle,count:S.islandCount,relief:S.islandRelief,coast:S.islandCoast,beach:S.islandBeach,
+  return {style:S.islandStyle,biome:S.islandBiome,count:S.islandCount,relief:S.islandRelief,coast:S.islandCoast,beach:S.islandBeach,features:S.islandFeatures,
     trees:S.islandTrees,treeScale:S.islandTreeScale,grass:S.islandGrass,rocks:S.islandRocks,
+    flowers:S.islandFlowers,landmarks:S.islandLandmarks,cascades:S.islandCascades,
     birds:S.islandBirds,wind:S.islandWind,surf:S.islandSurf};
 }
 /* Slider drags are coalesced; planting-only changes do not rebuild the
@@ -167,8 +179,9 @@ function queueIslandRebuild(mask){
     if(pending&1) generateIslands(S.islandSeed,options);
     else {
       islands.options=options;
-      if(pending&2) rebuildIslandTrees(options);
-      if(pending&4) rebuildIslandDetails(options);
+      if(pending&2) rebuildIslandTrees(options,true);
+      if(pending&4) rebuildIslandDetails(options,true);
+      if(pending&(2|8)) rebuildIslandScenery(options);
     }
   },220);
 }
@@ -196,9 +209,10 @@ function apply(k){
         removeIslands(); cliffEvents.length=0;
       }
       resetCamera(); break;
-    case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': queueIslandRebuild(1); break;
+    case 'islandBiome': case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': case 'islandFeatures': queueIslandRebuild(1); break;
     case 'islandTrees': case 'islandTreeScale': queueIslandRebuild(2); break;
     case 'islandGrass': case 'islandRocks': queueIslandRebuild(4); break;
+    case 'islandFlowers': case 'islandLandmarks': case 'islandCascades': queueIslandRebuild(8); break;
     case 'islandBirds': if(islands.active) islands.options.birds=v; break;
     case 'islandWind': if(islands.active) islands.options.wind=v; break;
     case 'islandSurf': if(islands.active) islands.options.surf=v; break;

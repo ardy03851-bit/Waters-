@@ -12,16 +12,29 @@ const ISLAND_STYLES={
   coves:     {cliff:0.76, peak:0.76, beach:1.45},
   highlands: {cliff:1.12, peak:1.38, beach:0.76}
 };
-const ISLAND_DEFAULTS={style:'wild',count:5,relief:1,coast:1,beach:1,trees:1,treeScale:1,grass:1,rocks:1,birds:true,wind:1,surf:1};
+/* Biomes change terrain, materials and ecology independently of coast style.
+   The numeric IDs are shared by the instanced detail and terrain shaders. */
+const ISLAND_BIOMES={
+  temperate:{id:0,pines:1.00,grass:1.00,rocks:1.00},
+  tropical: {id:1,pines:0.00,grass:1.15,rocks:0.75},
+  volcanic: {id:2,pines:0.00,grass:0.18,rocks:1.35},
+  alpine:   {id:3,pines:0.72,grass:0.55,rocks:1.30},
+  desert:   {id:4,pines:0.00,grass:0.22,rocks:1.05}
+};
+const ISLAND_BIOME_KEYS=Object.keys(ISLAND_BIOMES);
+const ISLAND_DEFAULTS={style:'wild',biome:'temperate',count:5,relief:1,coast:1,beach:1,features:1,
+  trees:1,treeScale:1,grass:1,rocks:1,flowers:1,landmarks:1,cascades:1,birds:true,wind:1,surf:1};
 /* Keep the public generator safe even when invoked outside the settings UI. */
 function islandConfig(input){
   const o=Object.assign({},ISLAND_DEFAULTS,input||{}), number=(v,lo,hi,d)=>Number.isFinite(v)?clamp(v,lo,hi):d;
   return {
     style:Object.prototype.hasOwnProperty.call(ISLAND_STYLES,o.style)?o.style:'wild',
+    biome:o.biome==='mixed'||Object.prototype.hasOwnProperty.call(ISLAND_BIOMES,o.biome)?o.biome:'temperate',
     count:Math.round(number(o.count,3,5,5)),relief:number(o.relief,0.6,1.45,1),
-    coast:number(o.coast,0.5,1.2,1),beach:number(o.beach,0.5,1.5,1),
+    coast:number(o.coast,0.5,1.2,1),beach:number(o.beach,0.5,1.5,1),features:number(o.features,0,1.5,1),
     trees:number(o.trees,0,1.7,1),treeScale:number(o.treeScale,0.7,1.4,1),
     grass:number(o.grass,0,1.5,1),rocks:number(o.rocks,0,1.5,1),
+    flowers:number(o.flowers,0,1.5,1),landmarks:number(o.landmarks,0,1.5,1),cascades:number(o.cascades,0,1.5,1),
     birds:typeof o.birds==='boolean'?o.birds:true,wind:number(o.wind,0,1.5,1),surf:number(o.surf,0,1.5,1)
   };
 }
@@ -58,13 +71,45 @@ function islandProfile(I,x,z){
   const ridge1=Math.exp(-I.peakFalloff*d1*d1), ridge2=Math.exp(-4.5*d2*d2);
   const headland=0.82+0.22*Math.sin(a*2.0+I.phase)+0.10*Math.sin(a*5.0-I.phase*0.7);
   const rock=I.cliff*(0.72+0.50*broad)*headland*(1-0.34*b)*cliff;
-  const hills=I.peak*(ridge1+0.5*ridge2)*inland+inland*(broad-0.38)*3.2+(fine-0.5)*1.5*cliff;
+  let hills=I.peak*(ridge1+0.5*ridge2)*inland+inland*(broad-0.38)*3.2+(fine-0.5)*1.5*cliff;
+  /* Biome landforms live inside the existing coastal envelope, so channels,
+     surf and the shoreline map still use exactly the rendered heightfield. */
+  const inner=sstep(0.99,0.70,r), amount=I.features*inner;
+  let formation=0;
+  if(I.biome==='tropical'){
+    formation=I.peak*0.30*Math.sin(u*5.0+I.phase)*Math.sin(v*4.0-I.phase*0.6)*inland;
+  }else if(I.biome==='volcanic'){
+    const crater=Math.hypot(u-I.peakX*0.45,v-I.peakZ*0.45);
+    const rim=Math.exp(-Math.pow((crater-0.25)/0.16,2));
+    const bowl=Math.exp(-Math.pow(crater/0.17,2));
+    const cone=I.peak*(1.22*sstep(0.95,0.10,crater)-0.58*bowl)*inland;
+    hills=lerp(hills,cone+(broad-0.5)*1.3*inland,clamp(I.features,0,1));
+    formation=I.peak*0.22*rim;
+  }else if(I.biome==='alpine'){
+    const serration=Math.pow(Math.abs(Math.sin(u*7.0+v*3.0+I.phase)),1.5);
+    formation=I.peak*(0.35+0.65*serration)*Math.exp(-2.4*(u*u+v*v));
+  }else if(I.biome==='desert'){
+    const mesa=sstep(0.75,0.49,r)*(0.48+0.52*sstep(0.46,0.34,r));
+    formation=I.peak*0.78*mesa+0.35*Math.sin((shelf+rock)*2.3+I.phase)*cliff;
+  }else{
+    formation=I.peak*0.18*Math.sin(u*5.5+v*3.0+I.phase)*inland;
+  }
   /* Water-cut radial gullies, broken ledges and uneven ridges interrupt the
      escarpment without changing its conservative outer bound. */
   const gully=Math.pow(Math.max(0,Math.cos(a*6.0+I.phase*1.7+(broad-0.5)*1.4)),18);
   const erosion=gully*cliff*(1-inland*0.65)*(0.5+1.1*sstep(0.45,0.9,r));
   const ledge=Math.sin((shelf+rock)*2.4+fine*5.0)*0.16*cliff*(1-inland*0.65);
-  return shelf+rock+hills+ledge-erosion;
+  let height=shelf+rock+hills+ledge-erosion+formation*amount;
+  if(I.biome==='desert'){
+    /* Wind-cut mesas have a broad, weathered cap rather than a pointed hill. */
+    const cap=I.cliff+I.peak*0.73+0.8+(broad-0.5)*0.45;
+    height=lerp(height,Math.min(height,cap),clamp(I.features,0,1));
+  }
+  /* Compress only extreme peaks smoothly into the shoreline map's 28 m
+     range. This avoids clipped height data at maximum relief without a flat
+     artificial ceiling or a discontinuous collision surface. */
+  if(height>20) height=20+8*(1-Math.exp(-(height-20)/8));
+  return height;
 }
 
 function makeIslandMesh(I){
@@ -185,15 +230,26 @@ function islandTexture(rgb,file,repeat){
   return tex;
 }
 let islandTextures=null;
-function loadIslandTextures(){
-  if(islandTextures) return;
-  islandTextures={
-    rock:islandTexture([90,85,78,255],'rock.jpg',true),
-    grass:islandTexture([74,100,50,255],'grass.jpg',true),
-    sand:islandTexture([190,172,130,255],'sand.jpg',true),
-    talus:islandTexture([105,94,77,255],'talus.jpg',true),
-    pine:islandTexture([0,0,0,0],'pine.png',false)
-  };
+function loadIslandTextures(biome){
+  if(!islandTextures){
+    islandTextures={
+      rock:islandTexture([90,85,78,255],'rock.jpg',true),
+      grass:islandTexture([74,100,50,255],'grass.jpg',true),
+      sand:islandTexture([190,172,130,255],'sand.jpg',true),
+      talus:islandTexture([105,94,77,255],'talus.jpg',true),
+      pine:islandTexture([0,0,0,0],'pine.png',false)
+    };
+  }
+  /* Biome materials are fetched only when needed and use the same
+     low-memory upload limit as the original island textures. */
+  if(biome==='tropical'||biome==='mixed'){
+    if(!islandTextures.palm) islandTextures.palm=islandTexture([0,0,0,0],'palm.png',false);
+    if(!islandTextures.palm2) islandTextures.palm2=islandTexture([0,0,0,0],'palm2.png',false);
+  }
+  if((biome==='volcanic'||biome==='mixed')&&!islandTextures.basalt)
+    islandTextures.basalt=islandTexture([48,48,46,255],'basalt.jpg',true);
+  if((biome==='desert'||biome==='mixed')&&!islandTextures.sandstone)
+    islandTextures.sandstone=islandTexture([165,116,72,255],'sandstone.jpg',true);
 }
 
 const ISLAND_VS=HDR+`
@@ -208,7 +264,8 @@ void main(){
 const ISLAND_FS=HDR+COMMON+`
 in vec3 vWorld; in vec3 vN; out vec4 o;
 uniform sampler2D uRock,uGrass,uSand,uTalus;
-uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover;
+uniform sampler2D uBasalt,uSandstone;
+uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover,uBiome;
 uniform vec4 uIsland; uniform vec4 uIslandForm;
 vec3 triRock(vec3 p,vec3 n){
   vec3 w=pow(abs(n),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
@@ -246,7 +303,33 @@ void main(){
   cove=clamp(cove,0.0,1.0);
   float beach=level*(0.10+0.90*cove)*(1.0-smoothstep(0.40,2.5,vWorld.y))*(0.7+0.3*n);
   albedo=mix(albedo,sand,beach*0.88);
+  /* Each ecology has a distinct ground palette and material. The same masks
+     still follow the real slope and cove geometry, rather than painted rings. */
+  if(uBiome>0.5&&uBiome<1.5){
+    vec3 tropicalGrass=grass*vec3(0.73,1.30,0.72);
+    albedo=mix(albedo,tropicalGrass,vegetated*0.65);
+    albedo=mix(albedo,sand*vec3(1.10,1.06,0.91),beach*0.32);
+  }else if(uBiome>1.5&&uBiome<2.5){
+    vec3 w=pow(abs(N),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
+    vec3 p=vWorld*0.21;
+    vec3 basalt=texture(uBasalt,p.zy).rgb*w.x+texture(uBasalt,p.xz).rgb*w.y+texture(uBasalt,p.xy).rgb*w.z;
+    basalt=pow(basalt,vec3(1.55))*(0.72+0.35*n)+vec3(0.012,0.012,0.011);
+    vec3 ash=basalt*vec3(1.35,1.12,0.96)+grit*vec3(0.08,0.055,0.035);
+    albedo=mix(basalt,ash,level*(0.3+0.4*n2));
+    albedo=mix(albedo,basalt*0.75,beach*0.7);
+  }else if(uBiome>2.5&&uBiome<3.5){
+    albedo=mix(rock*vec3(0.88,0.96,1.04),grass*vec3(0.70,0.89,0.76),vegetated*0.55);
+    albedo=mix(albedo,sand*0.75,beach*0.65);
+  }else if(uBiome>3.5){
+    vec3 w=pow(abs(N),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
+    vec3 p=vWorld*0.20;
+    vec3 stone=texture(uSandstone,p.zy).rgb*w.x+texture(uSandstone,p.xz).rgb*w.y+texture(uSandstone,p.xy).rgb*w.z;
+    stone=pow(stone,vec3(1.65))*vec3(0.95,0.77,0.60)*(0.95+0.22*n);
+    float strata=0.88+0.12*sin(vWorld.y*3.0+n*2.5);
+    albedo=mix(stone*strata,sand*vec3(0.98,0.74,0.52),level*0.30+beach*0.32);
+  }
   float snow=uSnowCover*level*smoothstep(4.0,12.0,vWorld.y)*(0.7+0.3*n);
+  if(uBiome>2.5&&uBiome<3.5) snow=max(snow,level*smoothstep(6.5,12.5,vWorld.y)*(0.70+0.30*n));
   albedo=mix(albedo,vec3(0.68,0.73,0.75),snow*0.85);
   /* Waterline and rain leave the lower cliff dark and glossy. */
   float wet=1.0-smoothstep(0.15+uSea*0.4,1.9+uSea*1.4,vWorld.y);
@@ -309,14 +392,14 @@ const pIsland=program(ISLAND_VS,ISLAND_FS,'island'), pTree=program(TREE_VS,TREE_
 function makeIslandTrees(random,options){
   const data=[], normal={nx:0,ny:1,nz:0};
   for(const I of islands.land){
-    const target=Math.round(I.rx*I.rz*0.64*options.trees), planted=[];
+    const target=Math.round(I.rx*I.rz*0.64*options.trees*ISLAND_BIOMES[I.biome].pines), planted=[];
     let added=0;
     for(let tries=0;tries<target*24&&added<target;tries++){
       const u=(random()*2-1)*0.91,v=(random()*2-1)*0.91;
       if(u*u+v*v>0.76) continue;
       const lx=u*I.rx,lz=v*I.rz,x=I.x+I.cs*lx-I.sn*lz,z=I.z+I.sn*lx+I.cs*lz;
       const y=islandGround(x,z,normal);
-      if(y<3.0||normal.ny<0.66) continue;
+      if(y<3.0||normal.ny<0.66||(I.biome==='alpine'&&y>12+I.cliff*0.2)) continue;
       /* Seeded, multi-scale forest patches preserve open grass and rock;
          a small exclusion radius keeps trunks from occupying the same spot. */
       const cover=islandNoise(x*0.115,z*0.115,I.seed+222)*0.7+
@@ -362,10 +445,11 @@ function makeIslandCoast(){
 }
 
 /* Planting changes do not need to rebuild the terrain or clear its surf. */
-function rebuildIslandTrees(options){
+function rebuildIslandTrees(options,skipScenery=false){
   if(!islands.active) return;
   if(islands.trees){ gl.deleteVertexArray(islands.trees.vao); gl.deleteBuffer(islands.trees.buffer); }
   makeIslandTrees(islandRandom(islands.seed^0xa5c39e21),options);
+  if(!skipScenery&&typeof rebuildIslandScenery==='function') rebuildIslandScenery(options);
 }
 
 function disposeIslands(){
@@ -373,6 +457,7 @@ function disposeIslands(){
   if(typeof disposeIslandDetails==='function') disposeIslandDetails();
   for(const I of islands.land){ gl.deleteVertexArray(I.vao);gl.deleteBuffer(I.vb);gl.deleteBuffer(I.ib); }
   if(islands.trees){ gl.deleteVertexArray(islands.trees.vao); gl.deleteBuffer(islands.trees.buffer); }
+  if(typeof disposeIslandScenery==='function') disposeIslandScenery();
   islands.land=[]; islands.coast=[]; islands.trees=null; islands.treeCount=0;
 }
 function generateIslands(seed,options){
@@ -392,7 +477,13 @@ function generateIslands(seed,options){
     [-37,  7, 7.6, 6.0,4.6,2.5,112,1.6],
     [ 31,  7, 8.7, 7.0,5.2,4.7,120,2.8]
   ];
-  islands.active=true; loadIslandTextures();
+  /* Mixed archipelagos use each biome at most once, in a seed-dependent order.
+     This separate random stream never changes the saved island layout. */
+  const biomeOrder=ISLAND_BIOME_KEYS.slice(), biomeRandom=islandRandom(islands.seed^0x743ad921);
+  for(let i=biomeOrder.length-1;i>0;i--){
+    const j=Math.floor(biomeRandom()*(i+1)); [biomeOrder[i],biomeOrder[j]]=[biomeOrder[j],biomeOrder[i]];
+  }
+  islands.active=true; loadIslandTextures(config.biome);
   for(let i=0;i<config.count;i++){
     const p=layouts[i],ang=(random()-0.5)*1.3+layoutAngle;
     const px=p[0]*flip,pz=p[1]+19;
@@ -400,7 +491,8 @@ function generateIslands(seed,options){
       rx:p[2]*(0.94+random()*0.12),rz:p[3]*(0.94+random()*0.12),
       cliff:p[4]*(0.9+random()*0.2)*style.cliff*config.relief,
       peak:p[5]*(0.85+random()*0.3)*style.peak*config.relief,n:p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
-      coast:config.coast,beachWidth:config.beach*style.beach,
+      coast:config.coast,beachWidth:config.beach*style.beach,features:config.features,
+      biome:config.biome==='mixed'?biomeOrder[i]:config.biome,
       phase:random()*Math.PI*2,beach:i===0?Math.atan2(Math.cos(ang)/p[3],Math.sin(ang)/p[2])+(random()-0.5)*0.5:random()*Math.PI*2,
       peakX:(random()-0.5)*0.4,peakZ:(random()-0.5)*0.4,seed:(islands.seed+i*131)|0};
     /* Conservative dry-land bounds include the maximum coastline distortion.
@@ -416,6 +508,7 @@ function generateIslands(seed,options){
   makeIslandMap();
   makeIslandTrees(islandRandom(islands.seed^0xa5c39e21),config);
   if(typeof makeIslandDetails==='function') makeIslandDetails(islandRandom(islands.seed^0x19b6af42),config);
+  if(typeof makeIslandScenery==='function') makeIslandScenery(config);
   makeIslandCoast();
   islands.nextCrash=simT+0.3;
   return islands.seed;
@@ -434,7 +527,10 @@ function drawIslands(mode,mirror){
   gl.uniform1f(L(pIsland,'uSea'),sea); gl.uniform1f(L(pIsland,'uSnowCover'),env.season===3?1:0);
   bindIslandTexture(6,islandTextures.rock,pIsland,'uRock'); bindIslandTexture(7,islandTextures.grass,pIsland,'uGrass');
   bindIslandTexture(8,islandTextures.sand,pIsland,'uSand'); bindIslandTexture(9,islandTextures.talus,pIsland,'uTalus');
+  bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pIsland,'uBasalt');
+  bindIslandTexture(13,islandTextures.sandstone||islandTextures.talus,pIsland,'uSandstone');
   for(const I of islands.land){
+    gl.uniform1f(L(pIsland,'uBiome'),ISLAND_BIOMES[I.biome].id);
     gl.uniform4f(L(pIsland,'uIsland'),I.x,I.z,I.cs,I.sn);
     gl.uniform4f(L(pIsland,'uIslandForm'),I.rx,I.rz,I.beach,I.beachWidth);
     gl.bindVertexArray(I.vao); gl.drawElements(gl.TRIANGLES,I.indexCount,gl.UNSIGNED_SHORT,0);
@@ -449,6 +545,7 @@ function drawIslands(mode,mirror){
     gl.bindVertexArray(islands.trees.vao); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,18,islands.treeCount);
   }
   if(typeof drawIslandDetails==='function') drawIslandDetails(mode,mirror,ce);
+  if(typeof drawIslandScenery==='function') drawIslandScenery(mode,mirror,ce);
   gl.bindVertexArray(null); gl.activeTexture(gl.TEXTURE0);
 }
 
