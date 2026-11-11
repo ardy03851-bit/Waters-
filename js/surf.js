@@ -140,7 +140,7 @@ void main(){
 
 /* Match WATER_VS's Gerstner displacement, including its distance-dependent
    wave filtering. This prevents the foam from floating above the swell. */
-const COAST_FOAM_VS=HDR+`
+const COAST_FOAM_VS=HDR+QUAKE_WAVE_GLSL+`
 layout(location=0) in vec2 aUV;
 layout(location=1) in vec4 aBase;
 layout(location=2) in vec4 aDir;
@@ -158,6 +158,7 @@ void main(){
     disp.xz+=w.xy*(uQ[i]*f/k)*cos(th); disp.y+=w.w*f*sin(th);
   }
   vec3 p=vec3(p0.x+disp.x,disp.y+0.075,p0.y+disp.z);
+  if(uSeaQuake.w>0.0001) p.y+=seaQuakeWave(p.xz);
   vUV=aUV; vWorld=p; vAge=clamp(aLife.x/aLife.y,0.0,1.0); vSeed=aLife.z;
   gl_Position=uVP*vec4(p,1.0);
 }`;
@@ -178,7 +179,7 @@ void main(){
 }`;
 /* Wind tears low, elongated veils from wave crests. Their base uses the same
    filtered Gerstner displacement and phase uniforms as the water mesh. */
-const WIND_SPRAY_VS=HDR+`
+const WIND_SPRAY_VS=HDR+QUAKE_WAVE_GLSL+`
 layout(location=0) in vec2 aUV;
 layout(location=1) in vec4 aBase; layout(location=2) in vec4 aDir; layout(location=3) in vec4 aLife;
 uniform mat4 uVP; uniform float uTime; uniform vec4 uW[8]; uniform float uQ[8],uPhase[8];
@@ -196,6 +197,7 @@ void main(){
   }
   float lift=sin(aUV.x*3.14159)*min(0.25,aLife.x*0.25);
   vWorld=vec3(p0.x+disp.x,disp.y+0.06+lift,p0.y+disp.z);
+  if(uSeaQuake.w>0.0001) vWorld.y+=seaQuakeWave(vWorld.xz);
   vUV=aUV; vAge=clamp(aLife.x/aLife.y,0.0,1.0); vSeed=aLife.z;
   gl_Position=uVP*vec4(vWorld,1.0);
 }`;
@@ -264,7 +266,8 @@ function updateWindStreaks(dt){
   const count=Math.min(8,Math.floor(windStreakAcc)); windStreakAcc-=Math.floor(windStreakAcc);
   const nx=Math.sin(windAng),nz=Math.cos(windAng);
   for(let i=0;i<count;i++){
-    const x=cam.target[0]+(Math.random()-0.5)*30,z=cam.target[2]+(Math.random()-0.5)*30;
+    const focus=typeof explore!=='undefined'&&explore.active?explore.pos:cam.target;
+    const x=focus[0]+(Math.random()-0.5)*30,z=focus[2]+(Math.random()-0.5)*30;
     const h=surfH(x,z,simT);
     if((islands.active&&islandGround(x,z)>h)||h<-waveA0*0.4) continue;
     putSurf(windStreaks,MAX_WIND_STREAKS,{x,y:h,z,width:1.6+Math.random()*3.0,nx,nz,power:sea,kind:0,
@@ -281,9 +284,10 @@ function packSurf(list,mesh){
   gl.bindBuffer(gl.ARRAY_BUFFER,mesh.instances); gl.bufferSubData(gl.ARRAY_BUFFER,0,mesh.data,0,o);
 }
 function drawSurfFoam(){
-  if(!coastFoam.length||!islands.active) return;
+  if(!coastFoam.length) return;
   packSurf(coastFoam,foamMesh);
   gl.useProgram(pCoastFoam); setSky(pCoastFoam);
+  if(typeof setQuakeUniform==='function') setQuakeUniform(pCoastFoam);
   gl.uniformMatrix4fv(L(pCoastFoam,'uVP'),false,VP); gl.uniform3fv(L(pCoastFoam,'uCam'),eye);
   gl.uniform4fv(L(pCoastFoam,'uW'),uWArr); gl.uniform1fv(L(pCoastFoam,'uQ'),uQArr);
   gl.uniform1fv(L(pCoastFoam,'uPhase'),uPhaseArr);
@@ -306,6 +310,7 @@ function drawWindSpray(){
   if(!windStreaks.length) return;
   packSurf(windStreaks,windMesh);
   gl.useProgram(pWindSpray); setSky(pWindSpray);
+  if(typeof setQuakeUniform==='function') setQuakeUniform(pWindSpray);
   gl.uniformMatrix4fv(L(pWindSpray,'uVP'),false,VP); gl.uniform3fv(L(pWindSpray,'uCam'),eye);
   gl.uniform4fv(L(pWindSpray,'uW'),uWArr); gl.uniform1fv(L(pWindSpray,'uQ'),uQArr); gl.uniform1fv(L(pWindSpray,'uPhase'),uPhaseArr);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);

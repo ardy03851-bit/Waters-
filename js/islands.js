@@ -511,9 +511,10 @@ function generateIslands(seed,options){
   if(typeof makeIslandScenery==='function') makeIslandScenery(config);
   makeIslandCoast();
   islands.nextCrash=simT+0.3;
+  if(typeof onIslandsChanged==='function') onIslandsChanged();
   return islands.seed;
 }
-function removeIslands(){ islands.active=false; disposeIslands(); }
+function removeIslands(){ islands.active=false; disposeIslands(); if(typeof onIslandsChanged==='function') onIslandsChanged(); }
 
 function bindIslandTexture(unit,tex,p,name){
   gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,tex); gl.uniform1i(L(p,name),unit);

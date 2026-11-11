@@ -84,8 +84,17 @@ vec3 enc(vec3 c){return c/(1.0+c);}
 vec3 dec(vec3 c){c=min(c,vec3(0.995));return c/(1.0-c);}
 `;
 
+/* Shared seaquake wavefront: the CPU uses the same envelope and phase. */
+const QUAKE_WAVE_GLSL = `
+uniform vec4 uSeaQuake;
+float seaQuakeWave(vec2 p){
+  float d=length(p-uSeaQuake.xy)-uSeaQuake.z;
+  return uSeaQuake.w*exp(-d*d*0.12)*sin(d*1.7);
+}
+`;
+
 /* ---- Water vertex: Gerstner waves + ripple height ---- */
-const WATER_VS = HDR + `
+const WATER_VS = HDR + QUAKE_WAVE_GLSL + `
 layout(location=0) in vec2 aUV;
 uniform mat4 uVP;
 uniform float uTime;
@@ -115,9 +124,17 @@ void main(){
     jxx+=q*w.x*w.x*sn; jzz+=q*w.y*w.y*sn; jxz+=q*w.x*w.y*sn;
   }
   vec3 pos=vec3(p0.x+disp.x,disp.y,p0.y+disp.z);
+  float quakeFoam=0.0;
+  if(uSeaQuake.w>0.0001){
+    pos.y+=seaQuakeWave(pos.xz);
+    nx-=(seaQuakeWave(pos.xz+vec2(0.15,0.0))-seaQuakeWave(pos.xz-vec2(0.15,0.0)))/0.30;
+    nz-=(seaQuakeWave(pos.xz+vec2(0.0,0.15))-seaQuakeWave(pos.xz-vec2(0.0,0.15)))/0.30;
+    float d=length(pos.xz-uSeaQuake.xy)-uSeaQuake.z;
+    quakeFoam=exp(-d*d*0.20)*uSeaQuake.w*0.48;
+  }
   vN=vec3(nx,1.0-ny,nz);
   float J=(1.0-jxx)*(1.0-jzz)-jxz*jxz;
-  vFoam=1.0-smoothstep(0.40,0.72,J);
+  vFoam=clamp(1.0-smoothstep(0.40,0.72,J)+quakeFoam,0.0,1.0);
   vec2 ruv=pos.xz/(2.0*uRipR)+0.5;
   float ef=smoothstep(0.0,0.08,min(min(ruv.x,1.0-ruv.x),min(ruv.y,1.0-ruv.y)));
   float ro=clamp(sp*0.5,0.0,1.2)/(2.0*uRipR);
@@ -136,7 +153,7 @@ out vec4 o;
 uniform vec3 uCam,uCamR,uCamF;
 uniform float uRipR,uRipN,uA0;
 uniform vec2 uRes,uNF,uWind;
-uniform float uHQ,uIslands,uSeaState;
+uniform float uHQ,uIslands,uSeaState,uUnderwater;
 uniform sampler2D uRip,uScene,uSceneD,uRefl,uIslandMap;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 void main(){
@@ -183,6 +200,17 @@ void main(){
   }
   s*=mix(1.0,0.5,smoothstep(60.0,400.0,dist));
   vec3 N=normalize(vec3(s.x,1.0,s.y));
+  if(uUnderwater>0.5){
+    /* Viewed from below: a wavering Snell-like window and internal reflection,
+       rather than applying the above-water Fresnel calculation backwards. */
+    vec3 toSurface=normalize(vWorld-uCam);
+    float opening=smoothstep(0.43,0.78,abs(dot(N,-V)));
+    vec3 air=skyCol(normalize(vec3(toSurface.x,abs(toSurface.y)+0.12,toSurface.z)),1.0);
+    float shimmer=texture(uDetail,vWorld.xz*0.35+uTime*0.035).a;
+    vec3 col=mix(uDeep*(0.8+uAmbLum),air*0.72,opening*0.72);
+    col+=uTurq*(0.025+0.035*shimmer)*uAmbLum;
+    o=vec4(tonemap(col),1.0);return;
+  }
   float nv=max(dot(N,V),0.0);
   float F=0.02+0.98*pow(1.0-nv,5.0);
 
@@ -298,10 +326,18 @@ void main(){
 }`;
 const SKY_FS = HDR + COMMON + `
 in vec2 vNdc; out vec4 o;
-uniform vec3 uCamF,uCamR,uCamU; uniform vec2 uTanAsp;
+uniform vec3 uCamF,uCamR,uCamU; uniform vec2 uTanAsp; uniform float uUnderwater;
 void main(){
   vec3 rd=normalize(uCamF+vNdc.x*uTanAsp.x*uTanAsp.y*uCamR+vNdc.y*uTanAsp.x*uCamU);
   vec3 c=skyCol(rd,1.0);
+  if(uUnderwater>0.001){
+    float up=smoothstep(-0.45,0.8,rd.y);
+    float n=texture(uDetail,rd.xz/(0.35+abs(rd.y))*0.65+vec2(uTime*0.012,-uTime*0.007)).a;
+    float rays=pow(max(0.0,sin(rd.x*9.0+rd.z*6.0+n*1.8+uTime*0.12)),8.0)*up;
+    vec3 water=mix(vec3(0.008,0.045,0.055),vec3(0.045,0.20,0.22),up);
+    water+=vec3(0.018,0.055,0.05)*rays*(0.3+0.7*uAmbLum);
+    c=mix(c,water,uUnderwater);
+  }
   o=vec4(tonemap(c)+(hash12(gl_FragCoord.xy)-0.5)/255.0,1.0);
 }`;
 
@@ -632,7 +668,7 @@ uniform sampler2D uScene,uDepth,uVelocity,uMotionTile;
 uniform vec2 uRes,uNF,uTanAsp,uTileRes;
 uniform vec3 uCam,uCamF,uCamR,uCamU;
 uniform mat4 uPrevVP;
-uniform float uMB,uCA,uVig,uHasVelocity;
+uniform float uMB,uCA,uVig,uHasVelocity,uSubmerge,uWaterTime;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 float sceneZ(float d){return d>=0.999999?600.0:min(linZ(d),600.0);}
 vec2 limitMotion(vec2 v){float l=length(v);return v*min(1.0,22.0/max(l,0.001));}
@@ -693,6 +729,16 @@ void main(){
     vec2 ca=(uv-0.5)*uCA;
     c.r+=(texture(uScene,clamp(uv-ca,0.0,1.0)).r-base.r)*0.65;
     c.b+=(texture(uScene,clamp(uv+ca,0.0,1.0)).b-base.b)*0.65;
+  }
+  if(uSubmerge>0.001){
+    float distance=sceneZ(texture(uDepth,uv).r);
+    float haze=1.0-exp(-distance*0.038);
+    vec3 rd=normalize(uCamF+vNdc.x*uTanAsp.x*uTanAsp.y*uCamR+vNdc.y*uTanAsp.x*uCamU);
+    float up=smoothstep(-0.45,0.75,rd.y);
+    float rays=pow(max(0.0,sin(rd.x*10.0+rd.z*7.0+uWaterTime*0.13)),12.0)*up;
+    vec3 water=mix(vec3(0.014,0.075,0.09),vec3(0.04,0.20,0.22),up)+vec3(0.012,0.035,0.03)*rays;
+    vec3 tinted=c*vec3(0.66,0.91,0.97);
+    c=mix(c,mix(tinted,water,haze*0.82),uSubmerge);
   }
   c*=1.0-uVig*smoothstep(0.38,0.92,length(uv-0.5));
   o=vec4(c,1.0);

@@ -2,7 +2,7 @@
 /* Load the plain scripts in order and stop if one fails. A later script must
    never run against a partially initialized WebGL program or context. */
 (function(){
-  const scripts=['core','engine','shaders','ocean','environment','splash','surf','islands','island-details','island-scenery','weather','physics','input','audio','render','ui'];
+  const scripts=['core','engine','shaders','ocean','environment','splash','surf','islands','island-details','island-scenery','weather','physics','ship','quake','input','explore','audio','render','ui'];
   const safeKey='aqua.graphics.safe', retryKey='aqua.graphics.autoRetry';
   const canvas=document.getElementById('gl'), panel=document.getElementById('fail');
   const title=document.getElementById('failTitle'), message=document.getElementById('failMessage');

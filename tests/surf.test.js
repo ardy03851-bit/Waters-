@@ -14,7 +14,7 @@ function fixture(){
     return ()=>{};
   }});
   const ctx=vm.createContext({gl,console,Math,Float32Array,Uint8Array,Uint16Array,
-    HDR:'',COMMON:'',program:()=>({}),L:()=>null});
+    HDR:'',COMMON:'',QUAKE_WAVE_GLSL:'',program:()=>({}),L:()=>null});
   const root=path.join(__dirname,'..','js');
   vm.runInContext(`
     const G=9.81,RHO_W=1000;
