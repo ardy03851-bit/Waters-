@@ -253,13 +253,22 @@ function uploadRipple(){
    Render targets (scene colour/depth for refraction, reflection)
    ============================================================ */
 let scene=null, refl=null, post=null, motion=null, rW=0, rH=0;
+/* Quarter-resolution bloom chain (two ping-pong targets). */
+let bloom=null;
 function disposeTargets(){
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   if(scene){ gl.deleteFramebuffer(scene.fb); gl.deleteTexture(scene.color); gl.deleteTexture(scene.depth); }
   if(refl){ gl.deleteFramebuffer(refl.fb); gl.deleteTexture(refl.color); gl.deleteRenderbuffer(refl.depth); }
   if(motion){ gl.deleteFramebuffer(motion.fb); gl.deleteTexture(motion.color); gl.deleteFramebuffer(motion.tileFb); gl.deleteTexture(motion.tile); }
   if(post){ gl.deleteFramebuffer(post.fb); gl.deleteTexture(post.color); gl.deleteTexture(post.depth); }
-  scene=refl=post=motion=null; rW=rH=0;
+  /* Quarter-resolution bloom chain: two small colour targets used for the
+     bright pass and a separable blur, shared by every frame. */
+  if(bloom){
+    for(const pass of [bloom.a,bloom.b]){
+      gl.deleteFramebuffer(pass.fb); gl.deleteTexture(pass.color);
+    }
+  }
+  scene=refl=post=motion=null; bloom=null; rW=rH=0;
 }
 function targetResource(resource,name){
   if(resource) return resource;
@@ -354,6 +363,24 @@ function makeTargets(w,h){
     gl.bindFramebuffer(gl.FRAMEBUFFER,motion.tileFb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,motion.tile,0);
     checkTarget('Motion tile',motion.tileW,motion.tileH);
+    /* Bloom is deliberately small: a quarter-resolution bright pass and two
+       ping-pong targets cost a fraction of one full-size buffer, even on a
+       high-DPI phone. It is what makes sun glints, lightning, foam crests and
+       the glow orb bleed light the way a real camera does. */
+    const bw=Math.max(2,w>>2), bh=Math.max(2,h>>2);
+    bloom={w:bw,h:bh,a:{fb:null,color:null},b:{fb:null,color:null}};
+    for(const name of ['a','b']){
+      const pass=bloom[name];
+      pass.fb=targetResource(gl.createFramebuffer(),'bloom '+name+' framebuffer');
+      pass.color=targetResource(gl.createTexture(),'bloom '+name+' colour');
+      gl.bindTexture(gl.TEXTURE_2D,pass.color);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,bw,bh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,pass.fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,pass.color,0);
+      checkTarget('Bloom '+name,bw,bh);
+    }
   }catch(error){
     disposeTargets();
     /* Failed allocations can leave multiple WebGL errors queued. Clear only

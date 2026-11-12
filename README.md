@@ -12,6 +12,8 @@ Open `http://localhost:8000` in a WebGL 2 capable browser.
 
 Use **Drop ball** or tap the sea, or choose **Ball rain** for a short burst of different balls. **Clear** removes the balls and splash effects and cancels any balls still queued by rain; existing surface ripples fade naturally. A new rain can be started immediately afterwards.
 
+Each ball type has its own material: leather, felt, walnut, cosmic resin, brushed steel and teal latex. The six surfaces are AI-generated photographs packed into one 3×2 texture atlas (`js/materials.js`, sources in [`assets/balls/`](assets/balls/README.md)) and sampled tri-planar, so they keep their grain as the balls tumble. Wetness, highlight sharpness and reflections are applied on top of the sampled material. If the atlas cannot be uploaded, or low-memory mode shrinks it, the balls keep a procedural fallback instead of failing to draw.
+
 Under **Settings → System**, **Screenshot** saves the canvas as a PNG and **Record video** captures the canvas (without the interface or sound). Recording uses a format supported by the browser, normally WebM or MP4. Wait for the current recording to finish saving before starting another one; recording requires browser support for canvas capture and MediaRecorder.
 
 ## Sail, swim & explore
@@ -20,7 +22,8 @@ Choose **Sail** in the dock (or press **B**) to load the ship and go straight to
 
 - At the helm, hold **W / ↑** to raise sail and **S / ↓** to ease it; **A / D** or **← / →** steer. The sail-power slider is an alternative to holding a key. **Space** or the anchor button drops or lifts the anchor; raising sail also lifts it. **V** switches between chase and deck views. Heading, speed in knots, sail power and anchor/pilot status are shown on the instruments.
 - On touch screens, hold the arrows to adjust sail and steer, use the slider or anchor button, and drag to look. On a phone, a settings button is available in the helm bar. **Leave helm** steps onto the deck without stopping the ship, so you can walk while it keeps its course. From the deck, **E** / **Leave deck** anchors the ship and returns you to the water; **Exit**, **Esc** or **U** anchors it and returns to the original orbit and ball controls.
-- Sailing is a forgiving, wind-assisted model rather than a full sail simulator: stronger wind changes speed, and a calm eventually leaves the vessel drifting. A visible wake grows with speed. The hull samples the sea and turns, heaves, pitches and rolls together with the deck, camera, reflections and resting balls. The ship stops before shallow terrain and at the 180 m sailing-area boundary; turn toward open water to continue. Quakes and the normal pause/slow-motion controls still apply.
+- Under **Settings → Scene**, **Ship** offers eight classes: Merchantman, Coastal sloop, Brigantine, Caravel, Frigate, Clipper, Dhow and Ghost galleon. Each has its own hull proportions, mast height, sail area, speed, agility, heel and tint, so a sloop accelerates and turns quickly while a galleon carries more way and leans further. Choosing a class re-proportions the same CC0 hull mesh, the deck grid, the chase camera and the balls resting on deck; it does not reload the model. The class is saved with the other settings.
+- Sailing is a forgiving, wind-assisted model rather than a full sail simulator: stronger wind changes speed, and a calm eventually leaves the vessel drifting. Sails fill and billow with the apparent wind and ease when you head up, the rigging keeps its silhouette through the motion blur, and the hull heels into gusts and turns. A visible wake grows with speed. The hull samples the sea and turns, heaves, pitches and rolls together with the deck, camera, reflections and resting balls. The ship stops before shallow terrain and at the 180 m sailing-area boundary; turn toward open water to continue. Quakes and the normal pause/slow-motion controls still apply.
 
 ### Voyage chart
 
@@ -48,20 +51,20 @@ Select **Islands** in the dock (or press **I**) to generate an archipelago; sele
 
 **Settings → Islands** has controls for:
 
-- **Temperate**, **Tropical**, **Volcanic**, **Alpine**, **Desert** or **Mixed** biomes. Tropical coasts grow palms; volcanic islands have dark basalt and crater-like high ground; alpine slopes hold snow; desert islands have sandstone mesas and cacti. Mixed mode assigns different biomes to each island from the seed.
+- **Temperate**, **Tropical**, **Volcanic**, **Alpine**, **Desert**, **Mossland** or **Mixed** biomes. Tropical coasts grow palms; volcanic islands have dark basalt and crater-like high ground; alpine slopes hold snow; desert islands have sandstone mesas and cacti; **Mossland** is the most detailed landform, with domain-warped karst ridges, fluted towers, stacked terraces, sinkholes with raised rims and hanging vegetation. Mixed mode assigns different biomes to each island from the seed and always includes one volcanic island.
 - Wild, Coves or Highlands coast types, three to five islands, mountain height, coastline detail, beaches and landform detail.
-- Tree and cactus density, tree height, grasses, boulders, wildflowers, rock formations, cascades and seabirds. Cascades appear on suitable downhill slopes in the wetter biomes.
+- Tree and cactus density, tree height, grasses, boulders, wildflowers, rock formations, cascades, ferns, reeds, mushrooms, moss cushions and seabirds. Cascades appear on suitable downhill slopes in the wetter biomes.
 - Vegetation wind response and cliff-surf intensity.
 
 New installs start with Mixed biomes; settings saved before biomes were added retain their temperate ecology. **New islands** chooses a new seed; **Storm coast** brings in a thunderstorm. The seed and island settings are saved with the other settings, so the same seed and controls recreate the same layout and planting. Terrain controls rebuild the current coast, while vegetation and scenery controls update only those detail layers. Pines, palms and grass bend in wind-driven gusts, rain darkens foliage, winter adds snow, and seabirds shelter during heavy storms and at night.
 
 Storm swells hitting exposed cliffs throw up curling water sheets, fine spray, mist and a fading foam wash. Wind can also tear streaks of spindrift off open-water crests. Water entries include a crown, a jet and, for angled impacts, a directional fan of water. Enable **Sound** in System settings to hear the impacts.
 
-The coastal surface and tree textures in `assets/` are local; no external texture service is required at runtime. Extra palm, basalt and sandstone textures load only when their biomes are used, and low-memory mode limits their upload size. Trees, rocks, grasses, flowers, formations and birds use seeded instancing to keep their populations bounded.
+Cacti, ferns, reeds, moss carpets and cushions use AI-generated skin and foliage textures from [`assets/plants/`](assets/plants/README.md), sampled tri-planar so a plant keeps its detail from any angle. The coastal surface and tree textures in `assets/` are local too; no external texture service is required at runtime. Extra palm, basalt and sandstone textures load only when their biomes are used, and low-memory mode limits their upload size while touch devices use smaller maps. Trees, rocks, grasses, flowers, ferns, reeds, mushrooms, cushions, formations and birds use seeded instancing to keep their populations bounded.
 
 ## Rendering controls
 
-**Settings → System** contains render quality, splash detail, motion blur and lens-effect controls. Water uses seeded swell phases shared with physics, wind-aligned detail, shoreline foam and shallow-water caustics. Ball materials include wetness-responsive highlights and reflections.
+**Settings → System** contains render quality, splash detail, motion blur, bloom, edge smoothing and lens-effect controls. Bloom is a quarter-resolution two-stage blur of the bright parts of the scene, so sun glints, foam and lit sails bleed light without a full-resolution cost; it is disabled automatically in low-memory graphics mode. Edge smoothing applies FXAA to the resolved frame, which steadies thin rigging, rails and distant coastlines. Film grain is available with the high-quality preset. Water uses seeded swell phases shared with physics, wind-aligned detail, shoreline foam and shallow-water caustics. Ball materials include wetness-responsive highlights and reflections.
 
 Motion blur uses depth-aware camera reprojection and visible ball and ship motion, with exposure adjusted for frame time. It does not stretch the ball geometry, and history is reset after a resize or a long frame gap. Reduced-motion preferences disable motion blur by default. On slower devices, lower the render quality or splash detail.
 
@@ -73,7 +76,7 @@ If the browser loses its WebGL context, rendering pauses and Aqua attempts one a
 
 ## Tests
 
-Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship and ball collisions, sail transparency, quake/wave synchronization, ripple uploads, and bounded effects:
+Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship and ball collisions, sail transparency, quake/wave synchronization, ripple uploads, bounded effects, and a whole-engine smoke test that boots every module against a stub WebGL 2 context, builds a Mossland island, cycles the ship catalogue and checks points of sail and heel:
 
 ```sh
 node --test tests/*.test.js

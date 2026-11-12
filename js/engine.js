@@ -26,7 +26,7 @@ const Hooks={
 };
 
 window.Aqua={
-  version:'1.3.0',
+  version:'1.4.0',
   hooks:Hooks,
   /* live view of the simulated balls */
   get balls(){ return balls; },
@@ -39,6 +39,27 @@ window.Aqua={
   weather(id){ setWeather(id); },
   time(h){ userSet('hour',h); },
   ship(on){ userSet('ship',on===undefined?!ship.enabled:!!on); },
+  /* Aqua.shipClass() lists the fleet · Aqua.shipClass(4) picks one */
+  shipClass(index){
+    if(index===undefined) return SHIP_CLASSES.map((c,i)=>i+': '+c.name);
+    const i=clamp(Math.round(index),0,SHIP_CLASSES.length-1);
+    userSet('shipClass',i);
+    return SHIP_CLASSES[i].name;
+  },
+  /* aqua biome helpers: Aqua.biome('moss') · Aqua.biome() lists them */
+  biome(id){
+    if(id===undefined) return Object.keys(ISLAND_BIOMES).concat(['mixed']);
+    userSet('islandBiome',id);
+    return id;
+  },
+  /* post effects: Aqua.post('bloom',false) */
+  post(name,on){
+    if(name==='bloom') userSet('bloom',on===undefined?!S.bloom:!!on);
+    else if(name==='fxaa') userSet('fxaa',on===undefined?!S.fxaa:!!on);
+    return {bloom:S.bloom,fxaa:S.fxaa};
+  },
+  /* rolling material atlas state, handy for a console check */
+  get materials(){ return {balls:ballAtlas.ready,loaded:ballAtlas.loaded,tile:ballAtlas.tile}; },
   explore(on){ if(on===undefined) toggleExplore(); else if(on) enterExplore(); else exitExplore(); },
   sail(){ enterSailing(); },
   quake(kind){ return kind==='island'?triggerIslandQuake():triggerSeaQuake(); },

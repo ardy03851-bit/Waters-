@@ -134,12 +134,17 @@ void main(){
   vec3 tex;
   if(vBiome>1.5&&vBiome<2.5)
     tex=texture(uBasalt,p.zy).rgb*weights.x+texture(uBasalt,p.xz).rgb*weights.y+texture(uBasalt,p.xy).rgb*weights.z;
-  else if(vBiome>3.5)
+  else if(vBiome>3.5&&vBiome<4.5)
     tex=texture(uSandstone,p.zy).rgb*weights.x+texture(uSandstone,p.xz).rgb*weights.y+texture(uSandstone,p.xy).rgb*weights.z;
   else tex=texture(uRock,p.zy).rgb*weights.x+texture(uRock,p.xz).rgb*weights.y+texture(uRock,p.xy).rgb*weights.z;
   vec3 alb=pow(tex,vec3(1.8))*(0.68+0.22*vSeed);
   if(vBiome>1.5&&vBiome<2.5) alb+=vec3(0.012);
   if(vBiome>2.5&&vBiome<3.5) alb*=vec3(0.86,0.94,1.04);
+  /* Mossland boulders wear a green carpet on their upward faces. */
+  if(vBiome>4.5){
+    float cap=smoothstep(0.35,0.85,N.y);
+    alb=mix(alb,alb*vec3(0.70,1.12,0.66)+vec3(0.012,0.030,0.010),cap*0.55);
+  }
   float wet=max(1.0-smoothstep(0.3,1.5,vWorld.y),uRain*0.38);
   alb*=1.0-0.38*wet;
   float snow=max(uSnowCover,(vBiome>2.5&&vBiome<3.5)?0.8:0.0)*smoothstep(5.0,11.0,vWorld.y)*smoothstep(0.4,0.85,N.y)*0.65;
@@ -178,7 +183,8 @@ void main(){
   if(vBiome>0.5&&vBiome<1.5) alb*=vec3(0.8,1.22,0.78);
   else if(vBiome>1.5&&vBiome<2.5) alb= mix(vec3(0.09,0.075,0.038),vec3(0.21,0.18,0.085),vHeight);
   else if(vBiome>2.5&&vBiome<3.5) alb*=vec3(0.82,0.90,0.80);
-  else if(vBiome>3.5) alb=mix(vec3(0.13,0.085,0.035),vec3(0.36,0.25,0.095),vHeight);
+  else if(vBiome>3.5&&vBiome<4.5) alb=mix(vec3(0.13,0.085,0.035),vec3(0.36,0.25,0.095),vHeight);
+  else alb=mix(vec3(0.035,0.085,0.030),vec3(0.14,0.26,0.085),vHeight)*vec3(0.92,1.12,0.94);
   alb*=0.82+0.38*vTint; alb*=1.0-uRain*0.17;
   alb=mix(alb,vec3(0.56,0.62,0.60),uSnowCover*0.45*smoothstep(2.0,8.0,vWorld.y));
   vec3 col=alb*(vec3(0.32+0.52*uAmbLum)+uHorizon*0.20+uSunCol*0.12);

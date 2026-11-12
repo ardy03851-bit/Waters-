@@ -20,7 +20,7 @@ function toast(msg){
    ============================================================ */
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
-  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, islandSeed:0,
+  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, shipClass:0, islandSeed:0,
   islandStyle:'wild', islandBiome:'mixed', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1, islandFeatures:1,
   islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandFlowers:1, islandLandmarks:1, islandCascades:1,
   islandBirds:true, islandWind:1, islandSurf:1,
@@ -28,7 +28,8 @@ const DEFAULTS={
   gravity:9.81, speed:1, bounce:1, water:1,
   quakeStrength:1, quakeMotion:reduceMotion?0:1, quakeAuto:false, quakeInterval:90,
   fov:50, orbit:false, follow:false, swimSpeed:1, lookSensitivity:1,
-  quality:'auto', hq:false, splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true, stats:true, sound:false, volume:0.7
+  quality:'auto', hq:false, splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true,
+  bloom:true, fxaa:true, stats:true, sound:false, volume:0.7
 };
 /* weather = a consistent set of physical quantities */
 const WEATHERS={
@@ -51,8 +52,8 @@ const SCENES=[
   {name:'Winter snow',   grad:'linear-gradient(160deg,#aebccb,#eef3f8 55%,#5f7386)', set:{season:3,weather:'snow',hour:11,dayCycle:0}},
   {name:'Starry night',  grad:'linear-gradient(160deg,#050a1e,#16224d 55%,#04101c)', set:{season:1,weather:'clear',hour:0.5,dayCycle:0}},
   {name:'Rainbow shower',grad:'linear-gradient(160deg,#5b7fb5,#c9d6e4 55%,#e0a86b)', set:{season:1,weather:'partly',hour:5.2,dayCycle:0,cloud:0.34,precip:0.55,fog:0.08}},
-  {name:'Blue-water voyage',grad:'linear-gradient(160deg,#64b9da,#b5e4e4 50%,#134b75)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,ship:true}},
-  {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true}}
+  {name:'Blue-water voyage',grad:'linear-gradient(160deg,#64b9da,#b5e4e4 50%,#134b75)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,ship:true,shipClass:5}},
+  {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true,shipClass:4}}
 ];
 const pct=v=>Math.round(v*100)+'%';
 function fogLabel(v){ const m=20000*Math.pow(40/20000,clamp(v,0,1)); return m>=1000?(m/1000).toFixed(m>=10000?0:1)+' km':Math.round(m/5)*5+' m'; }
@@ -71,6 +72,8 @@ const CONTROLS=[
   {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
   {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
   {tab:'scene',t:'toggle',k:'ship',label:'Sailing ship',sub:'A detailed ship to sail or explore'},
+  {tab:'scene',t:'seg',k:'shipClass',label:'Ship',cols:4,opts:SHIP_CLASSES.map((c,i)=>[i,c.short])},
+  {tab:'scene',t:'note',id:'shipNote',text:'Each class re-proportions the same CC0 hull and rig, with its own timber, canvas and handling. Hull, deck and ball contacts stay exact for every class.'},
   {tab:'scene',t:'buttons',items:[['Take the helm',()=>enterSailing()],['Swim & explore',()=>enterExplore()],['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
   {tab:'scene',t:'note',text:'Board the open main deck from alongside or go straight to the helm. The model has no explorable enclosed cabins. Quake controls are in Physics; coast controls are in Islands.'},
   {tab:'scene',t:'seg',k:'launch',label:'Tapping the sea',opts:[['drop','Drops a ball'],['throw','Throws a ball']]},
@@ -80,18 +83,18 @@ const CONTROLS=[
 
   {tab:'islands',t:'toggle',k:'islands',label:'Island archipelago',sub:'Generate a coast to explore'},
   {tab:'islands',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
-  {tab:'islands',t:'seg',k:'islandBiome',label:'Biome',cols:3,opts:[['temperate','Temperate'],['tropical','Tropical'],['volcanic','Volcanic'],['alpine','Alpine'],['desert','Desert'],['mixed','Mixed']]},
+  {tab:'islands',t:'seg',k:'islandBiome',label:'Biome',cols:4,opts:[['temperate','Temperate'],['tropical','Tropical'],['volcanic','Volcanic'],['alpine','Alpine'],['desert','Desert'],['moss','Mossland'],['mixed','Mixed']]},
   {tab:'islands',t:'seg',k:'islandStyle',label:'Coast type',opts:[['wild','Wild'],['coves','Coves'],['highlands','Highlands']]},
   {tab:'islands',t:'seg',k:'islandCount',label:'Island count',opts:[[3,'3'],[4,'4'],[5,'5']]},
   {tab:'islands',t:'range',k:'islandRelief',label:'Mountain height',min:0.6,max:1.45,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandCoast',label:'Coastline detail',min:0.5,max:1.2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandBeach',label:'Coves and beaches',min:0.5,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandFeatures',label:'Landform detail',min:0,max:1.5,step:0.05,fmt:pct},
-  {tab:'islands',t:'range',k:'islandTrees',label:'Trees and desert plants',min:0,max:1.7,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandTrees',label:'Trees and tall plants',min:0,max:1.7,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandTreeScale',label:'Tree height',min:0.7,max:1.4,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandGrass',label:'Coastal grasses',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandRocks',label:'Boulders',min:0,max:1.5,step:0.05,fmt:pct},
-  {tab:'islands',t:'range',k:'islandFlowers',label:'Wildflowers',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandFlowers',label:'Ferns and wildflowers',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandLandmarks',label:'Rock formations',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandCascades',label:'Cascades',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'toggle',k:'islandBirds',label:'Seabirds',sub:'Flocks shelter during storms and at night'},
@@ -138,6 +141,8 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Depth-aware camera and object motion'},
   {tab:'system',t:'range',k:'blur',label:'Blur strength',min:0.2,max:2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'system',t:'toggle',k:'lensFx',label:'Lens effects',sub:'Chromatic aberration and vignette'},
+  {tab:'system',t:'toggle',k:'bloom',label:'Bloom',sub:'Sun glints, lightning and glowing mushrooms bleed light'},
+  {tab:'system',t:'toggle',k:'fxaa',label:'Edge smoothing',sub:'FXAA for rigging, rails and distant coastlines'},
   {tab:'system',t:'toggle',k:'stats',label:'Performance stats',sub:'Frame rate, balls, resolution'},
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
@@ -216,6 +221,7 @@ function apply(k){
     case 'launch': launchMode=v; break;
     case 'throwSpeed': throwSpeed=v; break;
     case 'ship': setShipEnabled(v); resetCamera(v?'ship':'islands'); break;
+    case 'shipClass': setShipClass(v); break;
     case 'islands':
       cancelIslandRebuild();
       if(v) generateIslands(S.islandSeed,currentIslandOptions()); else {
@@ -258,6 +264,8 @@ function apply(k){
     case 'motionBlur': motionBlurOn=v; break;
     case 'blur': blurStrength=v; break;
     case 'lensFx': lensFxOn=v; break;
+    case 'bloom': bloomOn=!!v&&!safeGraphics; break;
+    case 'fxaa': fxaaOn=!!v; break;
     case 'stats': $('stats').classList.toggle('off',!v); break;
     case 'sound': if(!audioSet(v,S.volume)&&v){ S.sound=false; toast('Sound is not available in this browser'); } break;
     case 'volume': audioSet(undefined,v); break;
@@ -291,6 +299,7 @@ function userSet(k,v){
 function applyScene(sc){
   const o=sc.set, st=sunTimes(o.season);
   if(o.ship!==undefined){ setVal('ship',o.ship); if(o.ship){if(S.follow)setVal('follow',false);resetCamera('ship');} }
+  if(o.shipClass!==undefined) setVal('shipClass',o.shipClass);
   setVal('season',o.season); setWeather(o.weather,true);
   /* scenes may override individual weather ingredients (e.g. the rainbow
      shower needs broken cloud + rain, which no preset provides) */
@@ -320,6 +329,11 @@ function resetAll(){
 /* ============================================================
    Widgets
    ============================================================ */
+function shipClassNote(index){
+  const i=clamp(Math.round(+index||0),0,SHIP_CLASSES.length-1), c=SHIP_CLASSES[i];
+  return c.name+' · '+c.tag+' · speed ×'+c.speed.toFixed(2)+' · agility ×'+c.agility.toFixed(2)+
+    ' · mast ×'+c.mast.toFixed(2)+'. Hull, deck and ball contacts stay exact for every class.';
+}
 function setFill(inp){ inp.style.setProperty('--p',((inp.value-inp.min)/(inp.max-inp.min)*100)+'%'); }
 function buildRange(c,dock){
   const fmt=dock&&c.dockFmt?c.dockFmt:c.fmt;
@@ -339,6 +353,9 @@ function buildSeg(c){
   (binders[c.k]=binders[c.k]||[]).push(v=>{
     c.opts.forEach((o,i)=>{btns[i].classList.toggle('on',o[0]===v);btns[i].setAttribute('aria-pressed',o[0]===v?'true':'false');});
     if(c.k==='weather') $('wxCustom').textContent=v==='custom'?'Custom':'';
+    /* The fleet note names the selected class and its sea-keeping, so the
+       numbers behind the choice are visible without sailing first. */
+    if(c.k==='shipClass'){ const note=$('shipNote'); if(note) note.textContent=shipClassNote(v); }
   });
   w.appendChild(lab); w.appendChild(seg); return w;
 }
@@ -382,7 +399,7 @@ CONTROLS.forEach(c=>{
   else if(c.t==='buttons') node=buildButtons(c);
   else if(c.t==='scenes') node=buildScenes();
   else if(c.t==='info') node=buildInfo();
-  else if(c.t==='note'){ node=el('p','note'); node.textContent=c.text; }
+  else if(c.t==='note'){ node=el('p','note'); node.textContent=c.text; if(c.id) node.id=c.id; }
   if(node) sec.appendChild(node);
   if(c.dock) $('dockRow').appendChild(buildRange(c,true));
 });

@@ -359,8 +359,27 @@ const BALL_FS = HDR + COMMON + `
 in vec3 vWorld; in vec3 vWN; in vec3 vLocal;
 out vec4 o;
 uniform vec3 uCamEff; uniform float uType,uMode,uMirror,uPlane,uWet;
+/* AI-generated material atlas: columns, rows, and 0/1 for "uploaded". A
+   missing atlas leaves the procedural ball shading exactly as it was. */
+uniform sampler2D uBallTex;
+uniform vec3 uAtlasInfo;
 const vec3 BC[6]=vec3[6](vec3(0.85,0.07,0.08),vec3(0.96,0.96,0.94),vec3(0.06,0.25,0.85),vec3(0.98,0.80,0.10),vec3(0.96,0.96,0.94),vec3(0.07,0.62,0.22));
 vec2 dn(vec2 uv){vec3 d=texture(uDetail,uv).xyz*2.0-1.0;return d.xz;}
+/* One atlas tile, inset by a couple of texels so neighbouring materials can
+   never bleed in through bilinear filtering or a mip level. */
+vec3 atlasTile(vec2 uv,float tile){
+  vec2 t=vec2(1.0/uAtlasInfo.x,1.0/uAtlasInfo.y);
+  float col=mod(tile,uAtlasInfo.x), row=floor(tile/uAtlasInfo.x+0.001);
+  vec2 o=vec2(col*t.x,1.0-(row+1.0)*t.y);
+  vec2 g=t*0.012;
+  return texture(uBallTex,o+g+clamp(uv,0.0,1.0)*(t-2.0*g)).rgb;
+}
+/* Tri-planar sampling of a seamless map: no equatorial stretch, no pole pinch
+   and no visible equirectangular seam on a spinning ball. */
+vec3 ballTexture(vec3 p,vec3 n,float tile){
+  vec3 w=pow(abs(n),vec3(4.0)); w/=max(w.x+w.y+w.z,1e-4);
+  return atlasTile(p.zy,tile)*w.x+atlasTile(p.xz,tile)*w.y+atlasTile(p.xy,tile)*w.z;
+}
 void main(){
   if(uMirror>0.5&&vWorld.y<uPlane) discard;
   vec3 l=normalize(vLocal);
@@ -423,6 +442,17 @@ void main(){
     /* Fine brushed variation in the steel, rather than a featureless mirror. */
     float brush=texture(uDetail,vec2(l.y*13.0,l.x*1.6+l.z*1.4)).a;
     alb=vec3(0.74,0.79,0.84)*(0.94+0.12*brush); metal=1.0; rough=0.11; f0=0.9;
+  }
+  /* Photographic albedo from the generated atlas. The procedural pattern is
+     kept (rims, seams, holes, slosh) and the real surface grain is layered
+     underneath it: leather, felt, walnut, pearl resin, brushed steel, latex. */
+  if(uAtlasInfo.z>0.5&&t>=1&&t<=6){
+    vec3 mt=ballTexture(l*0.5+0.5,l,float(t-1));
+    float lum=dot(mt,vec3(0.30,0.59,0.11));
+    float amount=t==5?0.42:0.58;
+    vec3 tinted=alb*mix(vec3(1.0),mt/max(lum,0.06),0.46);
+    alb=mix(alb,mix(tinted,mt*1.30,0.18),amount);
+    rough=clamp(rough*(0.86+0.28*lum),0.035,1.0);
   }
   if(bn!=vec2(0.0)){
     vec3 axis=abs(N.y)>0.95?vec3(1.0,0.0,0.0):vec3(0.0,1.0,0.0);
@@ -611,6 +641,33 @@ void main(){
   o=vec4(tonemap(c)*a,a);
 }`;
 
+/* ---- Bloom: a small bright pass plus a separable Gaussian ----
+   Two quarter-resolution targets are used as a ping-pong pair, so the whole
+   effect costs a handful of cheap passes instead of one full-size blur. */
+const BLOOM_FS = HDR + `in vec2 vNdc; out vec4 o;
+uniform sampler2D uSrc;
+uniform vec2 uTexel,uDir;
+uniform float uMode,uThreshold;
+void main(){
+  vec2 uv=vNdc*0.5+0.5;
+  if(uMode<0.5){
+    /* Bright pass: keep only highlights, with a soft knee so a bright sky
+       does not flood the whole frame and small specular glints still bloom. */
+    vec3 c=texture(uSrc,uv).rgb;
+    float l=max(c.r,max(c.g,c.b));
+    float k=smoothstep(uThreshold,uThreshold+0.22,l);
+    o=vec4(c*k*k,1.0);
+  }else{
+    vec3 sum=vec3(0.0); float total=0.0;
+    for(int i=-4;i<=4;i++){
+      float w=exp(-float(i*i)/9.0);
+      sum+=texture(uSrc,uv+uDir*uTexel*float(i)).rgb*w;
+      total+=w;
+    }
+    o=vec4(sum/max(total,0.0001),1.0);
+  }
+}`;
+
 /* ---- Motion vectors and post-process ----
    Ball motion is reconstructed from two rigid transforms, while the camera
    is reprojected from depth. Vectors are packed in pixels with 12 bits per
@@ -664,14 +721,38 @@ void main(){
 }`;
 const POST_FS = HDR + MOTION_DECODE + `
 in vec2 vNdc; out vec4 o;
-uniform sampler2D uScene,uDepth,uVelocity,uMotionTile;
+uniform sampler2D uScene,uDepth,uVelocity,uMotionTile,uBloom;
 uniform vec2 uRes,uNF,uTanAsp,uTileRes;
 uniform vec3 uCam,uCamF,uCamR,uCamU;
 uniform mat4 uPrevVP;
-uniform float uMB,uCA,uVig,uHasVelocity,uSubmerge,uWaterTime;
+uniform float uMB,uCA,uVig,uHasVelocity,uSubmerge,uWaterTime,uBloomAmt,uFXAA,uGrain;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 float sceneZ(float d){return d>=0.999999?600.0:min(linZ(d),600.0);}
 vec2 limitMotion(vec2 v){float l=length(v);return v*min(1.0,22.0/max(l,0.001));}
+float luma(vec3 c){return dot(c,vec3(0.299,0.587,0.114));}
+/* Compact FXAA: find the dominant edge direction on a 3x3 luma stencil and
+   walk it until the contrast falls off, then blend. There is no multisample
+   buffer in this renderer, so this is what keeps thin rigging, rails and
+   distant coastlines free of stair-steps. */
+vec3 fxaa(vec2 uv,vec3 rgb){
+  vec2 t=1.0/uRes;
+  float lM=luma(rgb);
+  float lNW=luma(texture(uScene,uv+vec2(-1.0,-1.0)*t).rgb);
+  float lNE=luma(texture(uScene,uv+vec2( 1.0,-1.0)*t).rgb);
+  float lSW=luma(texture(uScene,uv+vec2(-1.0, 1.0)*t).rgb);
+  float lSE=luma(texture(uScene,uv+vec2( 1.0, 1.0)*t).rgb);
+  float lMin=min(lM,min(min(lNW,lNE),min(lSW,lSE)));
+  float lMax=max(lM,max(max(lNW,lNE),max(lSW,lSE)));
+  if(lMax-lMin<max(0.035,lMax*0.14)) return rgb;
+  vec2 dir=vec2(-((lNW+lNE)-(lSW+lSE)),((lNW+lSW)-(lNE+lSE)));
+  float reduce=max((abs(dir.x)+abs(dir.y))*0.03,1.0/128.0);
+  vec2 off=clamp(dir*(1.0/(min(abs(dir.x),abs(dir.y))+reduce))*t,vec2(-3.0*t.x,-3.0*t.y),vec2(3.0*t.x,3.0*t.y));
+  vec3 a=0.5*(texture(uScene,uv+off*(1.0/3.0-0.5)).rgb+texture(uScene,uv+off*(2.0/3.0-0.5)).rgb);
+  vec3 b=a*0.5+0.25*(texture(uScene,uv+off*-0.5).rgb+texture(uScene,uv+off*0.5).rgb);
+  float lb=luma(b);
+  return (lb<lMin||lb>lMax)?a:b;
+}
+float grainNoise(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 void main(){
   vec2 uv=vNdc*0.5+0.5;
   vec3 base=texture(uScene,uv).rgb, c=base;
@@ -740,8 +821,19 @@ void main(){
     vec3 tinted=c*vec3(0.66,0.91,0.97);
     c=mix(c,mix(tinted,water,haze*0.82),uSubmerge);
   }
+  if(uFXAA>0.5) c=fxaa(uv,base);
+  if(uBloomAmt>0.001){
+    /* A slightly desaturated, warm highlight bloom reads as real lens and
+       atmospheric scatter rather than a neon glow. */
+    vec3 glow=texture(uBloom,uv).rgb;
+    c+=glow*uBloomAmt;
+  }
+  if(uGrain>0.001){
+    float n=grainNoise(uv*uRes+fract(uWaterTime)*137.0)-0.5;
+    c+=n*uGrain*(1.0-0.6*luma(c));
+  }
   c*=1.0-uVig*smoothstep(0.38,0.92,length(uv-0.5));
-  o=vec4(c,1.0);
+  o=vec4(min(c,vec3(1.0)),1.0);
 }`;
 
 function shaderFailure(message,retryable){
@@ -793,6 +885,7 @@ const pBall=program(BALL_VS,BALL_FS,'ball');
 const pPart=program(PART_VS,PART_FS,'splash');
 const pPrecip=program(PRECIP_VS,PRECIP_FS,'precipitation');
 const pPost=program(POST_VS,POST_FS,'post-processing');
+const pBloom=program(POST_VS,BLOOM_FS,'bloom');
 const pMotion=program(MOTION_VS,MOTION_FS,'motion');
 const pMotionTile=program(POST_VS,MOTION_TILE_FS,'motion tile');
 

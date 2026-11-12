@@ -64,7 +64,7 @@ test('startup completes in order and reports missing scripts or WebGL clearly',(
   while(f.ctx.AquaBoot.state==='loading') f.scripts.at(-1).onload();
   assert.equal(f.ctx.AquaBoot.state,'running');
   assert.equal(starts,1);
-  assert.equal(f.scripts.length,20);
+  assert.equal(f.scripts.length,21);
   assert.ok(f.scripts.findIndex(s=>s.src==='js/island-scenery.js')>f.scripts.findIndex(s=>s.src==='js/island-details.js'));
   f.error(new Error('runtime failure'));
   assert.equal(f.elements.failTitle.textContent,'Graphics stopped');
@@ -242,7 +242,7 @@ test('incomplete targets are deleted and retried smaller; permanent failures sto
   const f=targetFixture({failChecks:1});
   f.api.start();
   let s=f.api.snapshot();
-  assert.equal(f.state.checks,6,'one failed check and five completed targets');
+  assert.equal(f.state.checks,8,'one failed check and seven completed targets');
   assert.ok(s.w<1200&&s.h<900);
   assert.ok(s.targets.every(Boolean));
   assert.ok(f.state.deleted.length>=3,'partial framebuffer and textures were released');
@@ -251,7 +251,7 @@ test('incomplete targets are deleted and retried smaller; permanent failures sto
   f.api.resize();f.api.resize();
   s=f.api.snapshot();
   assert.ok(s.targets.every(Boolean));
-  assert.ok(f.state.checks<=11,'the fallback size does not trigger an endless allocation loop');
+  assert.ok(f.state.checks<=13,'the fallback size does not trigger an endless allocation loop');
 
   const bad=targetFixture({failChecks:99});
   assert.throws(()=>bad.api.start(),/Scene framebuffer is incomplete/);

@@ -15,11 +15,15 @@ const ISLAND_STYLES={
 /* Biomes change terrain, materials and ecology independently of coast style.
    The numeric IDs are shared by the instanced detail and terrain shaders. */
 const ISLAND_BIOMES={
-  temperate:{id:0,pines:1.00,grass:1.00,rocks:1.00},
-  tropical: {id:1,pines:0.00,grass:1.15,rocks:0.75},
-  volcanic: {id:2,pines:0.00,grass:0.18,rocks:1.35},
-  alpine:   {id:3,pines:0.72,grass:0.55,rocks:1.30},
-  desert:   {id:4,pines:0.00,grass:0.22,rocks:1.05}
+  temperate:{id:0,pines:1.00,grass:1.00,rocks:1.00,ferns:0.55,reeds:0.20,mushrooms:0.18,cushions:0.35},
+  tropical: {id:1,pines:0.00,grass:1.15,rocks:0.75,ferns:0.95,reeds:0.30,mushrooms:0.10,cushions:0.30},
+  volcanic: {id:2,pines:0.00,grass:0.18,rocks:1.35,ferns:0.05,reeds:0.00,mushrooms:0.04,cushions:0.08},
+  alpine:   {id:3,pines:0.72,grass:0.55,rocks:1.30,ferns:0.28,reeds:0.10,mushrooms:0.22,cushions:0.55},
+  desert:   {id:4,pines:0.00,grass:0.22,rocks:1.05,ferns:0.02,reeds:0.00,mushrooms:0.00,cushions:0.05},
+  /* Mossland: wet, terraced karst with hanging ferns, reed hollows, moss
+     cushions and luminous mushrooms. Its dense heightfield resolves shelves
+     and towers that the other biomes do not have. */
+  moss:     {id:5,pines:0.42,grass:1.50,rocks:1.12,ferns:1.70,reeds:0.85,mushrooms:1.25,cushions:1.90}
 };
 const ISLAND_BIOME_KEYS=Object.keys(ISLAND_BIOMES);
 const ISLAND_DEFAULTS={style:'wild',biome:'temperate',count:5,relief:1,coast:1,beach:1,features:1,
@@ -48,6 +52,22 @@ function islandNoise(x,z,seed){
   return vnoise(x,z,4096,seed)*0.57+vnoise(x*2.13+17,z*2.13-9,4096,seed+17)*0.28+
     vnoise(x*4.37-3,z*4.37+21,4096,seed+43)*0.15;
 }
+/* Ridged multifractal: |noise| folded about its midpoint gives sharp crests
+   and rounded troughs, which is what makes eroded spurs, karst flutes and
+   terrace risers read as landform rather than as rolling hills. */
+function islandRidged(x,z,seed,octaves){
+  let sum=0,weight=0,amplitude=0.62,frequency=1,norm=0;
+  for(let i=0;i<octaves;i++){
+    const n=islandNoise(x*frequency+seed*0.013,z*frequency-seed*0.021,seed+i*137);
+    const ridge=1-Math.abs(n*2-1);
+    sum+=ridge*ridge*amplitude*weight;
+    norm+=amplitude*weight;
+    weight=0.55+0.45*ridge;
+    amplitude*=0.52; frequency*=2.07;
+  }
+  return clamp(sum/Math.max(norm,1e-4),0,1);
+}
+
 /* The profile is steep at exposed headlands and rolls gently into two coves. */
 function islandProfile(I,x,z){
   const dx=x-I.x,dz=z-I.z, lx=I.cs*dx+I.sn*dz, lz=-I.sn*dx+I.cs*dz;
@@ -72,9 +92,19 @@ function islandProfile(I,x,z){
   const headland=0.82+0.22*Math.sin(a*2.0+I.phase)+0.10*Math.sin(a*5.0-I.phase*0.7);
   const rock=I.cliff*(0.72+0.50*broad)*headland*(1-0.34*b)*cliff;
   let hills=I.peak*(ridge1+0.5*ridge2)*inland+inland*(broad-0.38)*3.2+(fine-0.5)*1.5*cliff;
+  const inner=sstep(0.99,0.70,r), amount=I.features*inner;
+  /* Fine erosion detail everywhere: spurs, little benches and gullies cut
+     into the broad slope. It is built from noise the profile already samples
+     plus one extra octave, so the extra cost stays small while the coastline
+     stops looking like a smooth extrusion. */
+  if(amount>0.001){
+    const micro=islandNoise(x*1.63-7,z*1.63+11,I.seed+517);
+    const ridgedDetail=(1-Math.abs(broad*2-1))*0.52+(1-Math.abs(fine*2-1))*0.29+
+                       (1-Math.abs(micro*2-1))*0.19;
+    hills+=(ridgedDetail-0.55)*2.35*amount*cliff;
+  }
   /* Biome landforms live inside the existing coastal envelope, so channels,
      surf and the shoreline map still use exactly the rendered heightfield. */
-  const inner=sstep(0.99,0.70,r), amount=I.features*inner;
   let formation=0;
   if(I.biome==='tropical'){
     formation=I.peak*0.30*Math.sin(u*5.0+I.phase)*Math.sin(v*4.0-I.phase*0.6)*inland;
@@ -91,6 +121,34 @@ function islandProfile(I,x,z){
   }else if(I.biome==='desert'){
     const mesa=sstep(0.75,0.49,r)*(0.48+0.52*sstep(0.46,0.34,r));
     formation=I.peak*0.78*mesa+0.35*Math.sin((shelf+rock)*2.3+I.phase)*cliff;
+  }else if(I.biome==='moss'){
+    /* Mossland is the most detailed landform: a domain-warped ridge field
+       raises fluted karst towers and buttresses, broad shelves are terraced
+       into moss-lined steps, and two seeded sinkholes cut hollows with raised
+       rims. Everything is still a single-valued heightfield, so ball
+       collision, the shoreline map and the surf line keep using the exact
+       surface that is drawn. */
+    /* The warp reuses the two low-frequency samples every profile already
+       takes, so the most intricate coast in the game still costs only a
+       couple of extra noise octaves per vertex. */
+    if(inner<=0.001){
+      /* Deep water and the outer shelf: the terracing and towers contribute
+         nothing once the inland mask is zero, so skip the whole field. */
+      formation=0;
+    }else{
+    const warpX=(broad-0.5)*10.0, warpZ=(fine-0.5)*10.0;
+    const field=islandRidged((x+warpX)*0.30,(z+warpZ)*0.30,I.seed+617,2);
+    /* Flutes and fins come from the samples the profile already takes, so the
+       extra detail costs one ridged field rather than four noise fields. */
+    const flute=1-Math.abs(fine*2-1);
+    const fin=Math.sin(x*1.7+z*2.3+I.phase)*0.55+Math.sin(x*0.9-z*3.1+I.phase*1.7)*0.45;
+    const towers=I.peak*1.20*Math.pow(Math.max(0,field-0.42)/0.58,1.45);
+    const fluting=(flute-0.62)*2.3*(0.55+0.19*Math.min(4.0,I.cliff))+fin*0.95+(broad-0.5)*1.6;
+    const sx=Math.cos(I.phase*2.3)*0.33, sz=Math.sin(I.phase*1.7)*0.29;
+    const hole=Math.exp(-Math.pow(Math.hypot(u-sx,v-sz)/0.155,2.0));
+    const rim=Math.exp(-Math.pow((Math.hypot(u-sx,v-sz)-0.215)/0.055,2.0));
+    formation=towers+fluting+I.peak*(0.25*rim-0.55*hole*inner);
+    }
   }else{
     formation=I.peak*0.18*Math.sin(u*5.5+v*3.0+I.phase)*inland;
   }
@@ -100,6 +158,16 @@ function islandProfile(I,x,z){
   const erosion=gully*cliff*(1-inland*0.65)*(0.5+1.1*sstep(0.45,0.9,r));
   const ledge=Math.sin((shelf+rock)*2.4+fine*5.0)*0.16*cliff*(1-inland*0.65);
   let height=shelf+rock+hills+ledge-erosion+formation*amount;
+  if(I.biome==='moss'){
+    /* Terrace the settled surface, not one component: every shelf, shoulder
+       and tower becomes a stack of steps with steep risers, while the beach
+       and the summit stay smooth so the surf line and the ball grid still
+       agree with what is drawn. */
+    const st=1.55, q=height/st, qi=Math.floor(q), qf=q-qi;
+    const stepped=(qi+Math.pow(sstep(0.22,0.78,qf),1.6))*st;
+    const blend=0.82*sstep(0.5,2.2,height)*(1-0.40*sstep(19,25,height));
+    height=lerp(height,stepped,blend);
+  }
   if(I.biome==='desert'){
     /* Wind-cut mesas have a broad, weathered cap rather than a pointed hill. */
     const cap=I.cliff+I.peak*0.73+0.8+(broad-0.5)*0.45;
@@ -211,8 +279,13 @@ function islandTexture(rgb,file,repeat){
   image.onload=()=>{
     if(gl.isContextLost()) return;
     let source=image;
-    if(typeof window!=='undefined'&&window.AquaBoot&&window.AquaBoot.safeMode&&Math.max(image.width,image.height)>512){
-      const ratio=512/Math.max(image.width,image.height), smaller=document.createElement('canvas');
+    /* Low-memory mode caps every upload at 512 px; a touch device that is not
+       in safe mode still gets a smaller texture than a desktop. */
+    let cap=0;
+    if(typeof window!=='undefined'&&window.AquaBoot&&window.AquaBoot.safeMode) cap=512;
+    else{ try{ if(matchMedia('(pointer: coarse)').matches||matchMedia('(any-pointer: coarse)').matches) cap=640; }catch(e){} }
+    if(cap&&Math.max(image.width,image.height)>cap){
+      const ratio=cap/Math.max(image.width,image.height), smaller=document.createElement('canvas');
       smaller.width=Math.max(1,Math.round(image.width*ratio)); smaller.height=Math.max(1,Math.round(image.height*ratio));
       const ctx=smaller.getContext('2d');
       if(ctx){ ctx.drawImage(image,0,0,smaller.width,smaller.height); source=smaller; }
@@ -250,6 +323,17 @@ function loadIslandTextures(biome){
     islandTextures.basalt=islandTexture([48,48,46,255],'basalt.jpg',true);
   if((biome==='desert'||biome==='mixed')&&!islandTextures.sandstone)
     islandTextures.sandstone=islandTexture([165,116,72,255],'sandstone.jpg',true);
+  /* Generated plant surfaces, loaded on the same lazy path: cactus skin where
+     cacti are planted, ferns and reeds for the wetter ecologies, and the moss
+     carpet only where moss actually grows. */
+  if((biome==='desert'||biome==='mixed')&&!islandTextures.cactus)
+    islandTextures.cactus=islandTexture([74,104,70,255],'plants/cactus-skin.jpg',true);
+  if(biome!=='desert'&&biome!=='volcanic'){
+    if(!islandTextures.fern) islandTextures.fern=islandTexture([38,76,32,255],'plants/fern-fronds.jpg',true);
+    if(!islandTextures.reed) islandTextures.reed=islandTexture([82,98,52,255],'plants/reed-blades.jpg',true);
+  }
+  if((biome==='moss'||biome==='mixed')&&!islandTextures.moss)
+    islandTextures.moss=islandTexture([44,72,34,255],'plants/moss-carpet.jpg',true);
 }
 
 const ISLAND_VS=HDR+`
@@ -264,7 +348,7 @@ void main(){
 const ISLAND_FS=HDR+COMMON+`
 in vec3 vWorld; in vec3 vN; out vec4 o;
 uniform sampler2D uRock,uGrass,uSand,uTalus;
-uniform sampler2D uBasalt,uSandstone;
+uniform sampler2D uBasalt,uSandstone,uMoss;
 uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover,uBiome;
 uniform vec4 uIsland; uniform vec4 uIslandForm;
 vec3 triRock(vec3 p,vec3 n){
@@ -320,13 +404,25 @@ void main(){
   }else if(uBiome>2.5&&uBiome<3.5){
     albedo=mix(rock*vec3(0.88,0.96,1.04),grass*vec3(0.70,0.89,0.76),vegetated*0.55);
     albedo=mix(albedo,sand*0.75,beach*0.65);
-  }else if(uBiome>3.5){
+  }else if(uBiome>3.5&&uBiome<4.5){
     vec3 w=pow(abs(N),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
     vec3 p=vWorld*0.20;
     vec3 stone=texture(uSandstone,p.zy).rgb*w.x+texture(uSandstone,p.xz).rgb*w.y+texture(uSandstone,p.xy).rgb*w.z;
     stone=pow(stone,vec3(1.65))*vec3(0.95,0.77,0.60)*(0.95+0.22*n);
     float strata=0.88+0.12*sin(vWorld.y*3.0+n*2.5);
     albedo=mix(stone*strata,sand*vec3(0.98,0.74,0.52),level*0.30+beach*0.32);
+  }else{
+    /* Mossland: generated moss carpet on the shelves, wet dark rock on the
+       risers, pale lichen crusts and damp seeps in the hollows. */
+    vec3 carpet=texture(uMoss,vWorld.xz*0.28).rgb;
+    vec3 mossy=pow(carpet,vec3(1.32))*vec3(0.88,1.24,0.82)*(0.90+0.24*n);
+    vec3 damp=pow(texture(uGrass,vWorld.xz*0.92).rgb,vec3(1.7))*vec3(0.52,0.86,0.62);
+    float ledge=smoothstep(0.42,0.86,N.y);
+    vec3 m=mix(rock*vec3(0.66,0.82,0.68),mossy*1.22,ledge*(0.56+0.42*n));
+    m=mix(m,damp,ledge*0.34*smoothstep(0.34,0.78,n2));
+    m=mix(m,vec3(0.66,0.65,0.48)*(0.78+0.42*n),smoothstep(0.58,0.86,n)*0.16);
+    albedo=mix(m,sand*0.70,beach*0.46);
+    albedo*=mix(1.0,0.84,ledge*smoothstep(0.15,0.55,n));
   }
   float snow=uSnowCover*level*smoothstep(4.0,12.0,vWorld.y)*(0.7+0.3*n);
   if(uBiome>2.5&&uBiome<3.5) snow=max(snow,level*smoothstep(6.5,12.5,vWorld.y)*(0.70+0.30*n));
@@ -483,16 +579,24 @@ function generateIslands(seed,options){
   for(let i=biomeOrder.length-1;i>0;i--){
     const j=Math.floor(biomeRandom()*(i+1)); [biomeOrder[i],biomeOrder[j]]=[biomeOrder[j],biomeOrder[i]];
   }
+  /* A mixed archipelago always contains one volcanic island: it is the most
+     distinctive silhouette and it keeps the coast readable at a glance. The
+     remaining islands still draw their biomes from a seeded shuffle. */
+  biomeOrder.splice(biomeOrder.indexOf('volcanic'),1); biomeOrder.unshift('volcanic');
   islands.active=true; loadIslandTextures(config.biome);
   for(let i=0;i<config.count;i++){
     const p=layouts[i],ang=(random()-0.5)*1.3+layoutAngle;
     const px=p[0]*flip,pz=p[1]+19;
+    const biome=config.biome==='mixed'?biomeOrder[i]:config.biome;
     const I={x:lc*px-ls*pz+(random()-0.5)*2.5,z:ls*px+lc*pz-19+(random()-0.5)*2.5,
       rx:p[2]*(0.94+random()*0.12),rz:p[3]*(0.94+random()*0.12),
       cliff:p[4]*(0.9+random()*0.2)*style.cliff*config.relief,
-      peak:p[5]*(0.85+random()*0.3)*style.peak*config.relief,n:p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
+      peak:p[5]*(0.85+random()*0.3)*style.peak*config.relief,
+      /* Karst terraces need a denser grid to be resolved rather than averaged
+         away; still well inside the 16-bit index limit. */
+      n:biome==='moss'?Math.min(184,p[6]+20):p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
       coast:config.coast,beachWidth:config.beach*style.beach,features:config.features,
-      biome:config.biome==='mixed'?biomeOrder[i]:config.biome,
+      biome,
       phase:random()*Math.PI*2,beach:i===0?Math.atan2(Math.cos(ang)/p[3],Math.sin(ang)/p[2])+(random()-0.5)*0.5:random()*Math.PI*2,
       peakX:(random()-0.5)*0.4,peakZ:(random()-0.5)*0.4,seed:(islands.seed+i*131)|0};
     /* Conservative dry-land bounds include the maximum coastline distortion.
@@ -530,6 +634,7 @@ function drawIslands(mode,mirror){
   bindIslandTexture(8,islandTextures.sand,pIsland,'uSand'); bindIslandTexture(9,islandTextures.talus,pIsland,'uTalus');
   bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pIsland,'uBasalt');
   bindIslandTexture(13,islandTextures.sandstone||islandTextures.talus,pIsland,'uSandstone');
+  bindIslandTexture(15,islandTextures.moss||islandTextures.grass,pIsland,'uMoss');
   for(const I of islands.land){
     gl.uniform1f(L(pIsland,'uBiome'),ISLAND_BIOMES[I.biome].id);
     gl.uniform4f(L(pIsland,'uIsland'),I.x,I.z,I.cs,I.sn);
