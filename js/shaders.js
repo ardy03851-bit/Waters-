@@ -6,7 +6,7 @@ const HDR = '#version 300 es\nprecision highp float;\nprecision highp int;\nprec
 
 const COMMON = `
 uniform sampler2D uDetail;
-uniform float uTime,uStorm,uAmbLum,uSunLum,uCloudLo,uExp,uFogD,uNight,uRough,uRain;
+uniform float uTime,uStorm,uAmbLum,uSunLum,uCloudLo,uExp,uFogD,uNight,uRough,uRain,uVFX;
 uniform vec3 uSun,uMoon,uLight,uSunCol,uZenith,uHorizon,uGlow,uFogCol,uSunDisc,uMoonDisc,uDeep,uTurq;
 uniform vec2 uCloudOff;
 uniform vec4 uBolt;
@@ -19,15 +19,43 @@ vec3 skyCol(vec3 rd,float sunOn){
   float sd=max(dot(rd,uSun),0.0);
   float md=max(dot(rd,uMoon),0.0);
   c+=uGlow*(pow(sd,5.0)*0.30+pow(sd,48.0)*0.8);
-  c+=uMoonDisc*(pow(md,40.0)*0.010+pow(md,600.0)*0.05);
+  /* Moon halo: the tight disc, the atmospheric ring around it and the wide
+     scattering glow that lights thin cloud from behind. */
+  c+=uMoonDisc*(pow(md,40.0)*0.010+pow(md,600.0)*0.05+pow(md,22.0)*0.012+pow(md,140.0)*0.035);
   if(sunOn>0.5&&uNight>0.01){
-    /* stars */
+    /* Two star layers: a dense faint field plus a sparse set of brighter
+       stars with their own colour temperature and twinkle phase. */
     vec2 sp=rd.xz/(rd.y+0.35)*46.0; vec2 ci=floor(sp); vec2 cf=fract(sp)-0.5;
     float hs=hash12(ci);
     vec2 so=(vec2(hash12(ci+7.3),hash12(ci+19.1))-0.5)*0.7;
     float st=step(0.88,hs)*(1.0-smoothstep(0.02,0.07+0.08*hs,length(cf-so)));
     float tw=0.72+0.28*sin(uTime*2.6+hs*50.0);
     c+=mix(vec3(1.0,0.9,0.8),vec3(0.8,0.9,1.0),fract(hs*13.7))*st*tw*uNight*(0.25+(hs-0.88)*7.0)*smoothstep(0.0,0.22,rd.y);
+    vec2 sp2=rd.xz/(rd.y+0.45)*19.0; vec2 ci2=floor(sp2); vec2 cf2=fract(sp2)-0.5;
+    float hb=hash12(ci2+41.7);
+    vec2 so2=(vec2(hash12(ci2+3.1),hash12(ci2+23.9))-0.5)*0.55;
+    float bright=step(0.955,hb)*(1.0-smoothstep(0.006,0.05,length(cf2-so2)));
+    float tw2=0.65+0.35*sin(uTime*1.7+hb*61.0);
+    c+=mix(vec3(1.0,0.86,0.70),vec3(0.72,0.86,1.0),fract(hb*7.9))
+        *bright*tw2*uNight*2.4*(0.35+(hb-0.955)*40.0)*smoothstep(0.0,0.28,rd.y);
+    /* A faint galactic band with dust lanes, aligned off the horizon. */
+    vec3 mwN=normalize(vec3(0.40,0.46,-0.80));
+    float bandDist=dot(rd,mwN)/0.17;
+    float band=exp(-bandDist*bandDist);
+    float dn=texture(uDetail,vec2(rd.x*0.9+rd.z*0.4,rd.y*1.7+rd.z*0.25)).a;
+    float dust=texture(uDetail,vec2(rd.x*2.2-rd.z*0.6,rd.y*4.1)).a;
+    float mw=band*smoothstep(0.28,0.86,dn*0.72+0.28)*(1.0-0.72*dust)*smoothstep(0.02,0.26,rd.y);
+    c+=vec3(0.36,0.44,0.64)*mw*uNight*0.085;
+    /* Shooting stars: one short, fading trail every few seconds. */
+    float slot=floor(uTime*0.085), sph=fract(uTime*0.085);
+    vec2 p0=(vec2(hash12(vec2(slot,3.1)),hash12(vec2(slot,8.7)))-0.5)*vec2(1.9,0.9);
+    vec2 sdir=normalize(vec2(0.55+0.45*hash12(vec2(slot,5.5)),-0.30-0.55*hash12(vec2(slot,9.9))));
+    vec2 q=(rd.xz/(rd.y+0.42))*0.11-p0;
+    float along=clamp(dot(q,sdir),0.0,1.4);
+    float across=abs(dot(q,vec2(-sdir.y,sdir.x)));
+    float head=smoothstep(0.01,0.05,sph)*(1.0-smoothstep(0.10,0.17,sph));
+    float trail=exp(-across*120.0)*smoothstep(0.0,0.12,along)*exp(-along*2.4);
+    c+=vec3(0.82,0.90,1.0)*trail*head*uNight*2.1*smoothstep(0.02,0.18,rd.y);
   }
   {
     vec2 cuv=rd.xz/(h+0.10)*0.20+uCloudOff;
@@ -61,6 +89,8 @@ vec3 skyCol(vec3 rd,float sunOn){
       }
     }
   }
+  /* Night airglow: a very faint green-blue lift close to the horizon. */
+  if(sunOn>0.5&&uNight>0.01) c+=vec3(0.012,0.030,0.024)*uNight*exp(-h*7.0);
   /* aerial perspective / fog: optical depth through a 150 m thick haze layer */
   float fl=min(150.0/max(rd.y,0.004),40000.0);
   c=mix(c,uFogCol,1.0-exp(-uFogD*fl));
@@ -299,13 +329,21 @@ void main(){
   /* sun glitter (GGX) */
   vec3 H=normalize(L+V);
   float nh=max(dot(N,H),0.0);
-  float a=0.035+0.07*uRough+0.05*uRain+dist*0.00025; float a2=a*a;
+  float a=0.035+0.07*uRough+0.05*uRain+dist*0.00025;
+  /* Moonlight is a point source: its path is sharper and its glints brighter. */
+  a*=1.0-0.32*uNight; float a2=a*a;
   float dd=nh*nh*(a2-1.0)+1.0;
   float D=a2/(3.14159265*dd*dd);
   float vh=max(dot(V,H),0.0);
   float Fs=0.02+0.98*pow(1.0-vh,5.0);
   float nl=max(dot(N,L),0.0);
   vec3 spec=uSunCol*min(D*Fs/(4.0*max(nv,0.08)),22.0)*0.78*smoothstep(0.0,0.12,nl)*step(0.0,L.y);
+  spec*=1.0+1.8*uNight;
+  /* The broad moon path: grazing reflections carry a cool column of light
+     toward the moon, not just isolated sparkles. */
+  vec3 moonR=reflect(-V,N);
+  spec+=vec3(0.36,0.48,0.68)*pow(max(dot(moonR,uMoon),0.0),22.0)*uNight
+        *(0.10+0.22*Fs)*smoothstep(0.0,0.2,uMoon.y);
 
   /* White water is a layered lace of bubbles and filaments, not opaque
      round spots. The crest, interactive wake and shore wash share the same
@@ -315,6 +353,12 @@ void main(){
   float f1=texture(uDetail,fp*1.15+vec2(1.7,-2.3)).a;
   float f2=texture(uDetail,fp*3.1+vec2(-3.1,0.8)).a;
   float fn=f0*0.50+f1*0.34+f2*0.16;
+  /* Advanced VFX resolves a finer bubble lace inside the same water. */
+  if(uVFX>0.5){
+    float f3=texture(uDetail,fp*6.3+vec2(2.2,5.7)).a;
+    fn=mix(fn,fn*0.80+f3*0.20,0.85);
+    f1=mix(f1,f3,0.35);
+  }
   float bubbles=smoothstep(0.41,0.66,fn+0.08*(f1-0.5));
   float filaments=1.0-smoothstep(0.035,0.13,abs(f0-0.51+(f1-0.5)*0.35));
   /* Long, intermittent windrows appear only in a rough sea; they follow
@@ -325,7 +369,17 @@ void main(){
   float fm=clamp(coverage*(0.48*bubbles+0.33*filaments)+coverage*coverage*0.22*bubbles,0.0,0.9);
   float foamLight=0.40*uAmbLum+0.20*uSunLum*max(dot(N,L),0.0)+0.08*uStorm;
   vec3 foamCol=vec3(0.90,0.94,0.95)*foamLight*(0.80+0.35*fn);
+  /* Bioluminescent plankton: breaking foam and the shore wash glow faintly
+     cyan after dark, strongest where the bubbles are thickest. */
+  float bio=uNight*(0.35+0.65*bubbles)*(1.0-smoothstep(0.55,0.9,uStorm));
+  foamCol+=vec3(0.05,0.55,0.52)*bio*0.55;
   col=mix(col+spec*(1.0-fm),foamCol,fm);
+  col+=vec3(0.08,0.75,0.66)*bio*coverage*0.16;
+  /* Advanced VFX adds the fine aerosol haze that hangs over a breaking wave. */
+  if(uVFX>0.5){
+    float hazeAmt=smoothstep(0.12,0.95,shoreFoam)*(0.30+0.70*uSeaState);
+    col+=vec3(0.78,0.86,0.90)*(0.030+0.055*uAmbLum)*hazeAmt*clamp(uVFX*0.5,0.0,1.0);
+  }
 
   /* horizon haze */
   float fog=max(smoothstep(100.0,580.0,dist),1.0-exp(-dist*uFogD));
@@ -569,6 +623,15 @@ vec3 envC(vec3 d){
 }
 void main(){
   vec3 V=normalize(vFwd);
+  if(vKind>4.5){
+    /* Bioluminescent plankton: a tiny, soft, cold glow that drifts in the
+       surf after dark. Additive-looking core, premultiplied output. */
+    float d=dot(vQ,vQ); if(d>1.0) discard;
+    float core=exp(-d*10.0)*vA;
+    vec3 c=vec3(0.07,0.95,0.76)*(0.55+uAmbLum*0.6);
+    o=vec4(tonemap(c)*core,core);
+    return;
+  }
   if(vKind>1.5){
     /* mist: noisy soft puff with forward scattering towards the sun */
     float d=dot(vQ,vQ); if(d>1.0) discard;
@@ -670,7 +733,7 @@ void main(){
 const BLOOM_FS = HDR + `in vec2 vNdc; out vec4 o;
 uniform sampler2D uSrc;
 uniform vec2 uTexel,uDir;
-uniform float uMode,uThreshold;
+uniform float uMode,uThreshold,uSpread;
 void main(){
   vec2 uv=vNdc*0.5+0.5;
   if(uMode<0.5){
@@ -684,7 +747,7 @@ void main(){
     vec3 sum=vec3(0.0); float total=0.0;
     for(int i=-4;i<=4;i++){
       float w=exp(-float(i*i)/9.0);
-      sum+=texture(uSrc,uv+uDir*uTexel*float(i)).rgb*w;
+      sum+=texture(uSrc,uv+uDir*uTexel*float(i)*uSpread).rgb*w;
       total+=w;
     }
     o=vec4(sum/max(total,0.0001),1.0);
@@ -744,11 +807,11 @@ void main(){
 }`;
 const POST_FS = HDR + MOTION_DECODE + `
 in vec2 vNdc; out vec4 o;
-uniform sampler2D uScene,uDepth,uVelocity,uMotionTile,uBloom;
+uniform sampler2D uScene,uDepth,uVelocity,uMotionTile,uBloom,uDirt;
 uniform vec2 uRes,uNF,uTanAsp,uTileRes;
-uniform vec3 uCam,uCamF,uCamR,uCamU;
+uniform vec3 uCam,uCamF,uCamR,uCamU,uSun,uMoon,uSunCol;
 uniform mat4 uPrevVP;
-uniform float uMB,uCA,uVig,uHasVelocity,uSubmerge,uWaterTime,uBloomAmt,uFXAA,uGrain;
+uniform float uMB,uCA,uVig,uHasVelocity,uSubmerge,uWaterTime,uBloomAmt,uFXAA,uGrain,uNight,uVFX;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 float sceneZ(float d){return d>=0.999999?600.0:min(linZ(d),600.0);}
 vec2 limitMotion(vec2 v){float l=length(v);return v*min(1.0,22.0/max(l,0.001));}
@@ -834,13 +897,84 @@ void main(){
     c.r+=(texture(uScene,clamp(uv-ca,0.0,1.0)).r-base.r)*0.65;
     c.b+=(texture(uScene,clamp(uv+ca,0.0,1.0)).b-base.b)*0.65;
   }
+  /* ---- advanced lens and light transport ------------------------------- */
+  vec3 Ld=uSun.y>-0.015?uSun:uMoon;
+  float lightUp=uSun.y>-0.015?1.0:step(0.0,uMoon.y);
+  float lz=dot(Ld,uCamF);
+  vec2 luv=vec2(0.0); float lvis=0.0;
+  if(lz>0.12){
+    luv=vec2(dot(Ld,uCamR)/(lz*uTanAsp.x*uTanAsp.y),dot(Ld,uCamU)/(lz*uTanAsp.x))*0.5+0.5;
+    if(all(greaterThan(luv,vec2(0.001)))&&all(lessThan(luv,vec2(0.999)))){
+      lvis=smoothstep(260.0,540.0,sceneZ(texture(uDepth,luv).r));
+    }
+  }
+  float vf=clamp(uVFX*0.5,0.0,1.0);
+  if(uVFX>0.5){
+    /* Volumetric light shafts: march toward the sun/moon through sky pixels.
+       The depth test stops shafts at ridges, so they read as real scattering. */
+    if(lz>0.12&&lvis>0.01&&lightUp>0.5){
+      vec2 delta=(luv-uv)/10.0, q=uv;
+      float acc=0.0;
+      for(int i=0;i<10;i++){
+        q+=delta;
+        float sd=sceneZ(texture(uDepth,q).r);
+        acc+=smoothstep(240.0,560.0,sd);
+      }
+      acc*=0.1;
+      vec3 rayC=mix(vec3(1.0,0.85,0.62),vec3(0.52,0.64,0.96),uNight);
+      c+=rayC*acc*lvis*exp(-length(uv-luv)*1.45)*0.20*vf;
+    }
+    /* Lens flare: a handful of tinted ghosts on the optical axis, a halo and
+       a dust layer that only lights up around bright sources. */
+    float flareI=lvis*mix(0.35,1.0,uSun.y>-0.015?1.0:0.7);
+    if(lz>0.12&&flareI>0.001){
+      vec2 axis=vec2(0.5)-luv;
+      for(int i=1;i<=4;i++){
+        float k=float(i)*0.56;
+        vec2 q=0.5+axis*k;
+        float r=length((uv-q)*vec2(uRes.x/max(uRes.y,1.0),1.0));
+        float disc=smoothstep(0.052,0.012,r);
+        vec3 tint=i==1?vec3(0.26,0.55,0.96):i==2?vec3(0.96,0.58,0.24):i==3?vec3(0.35,0.92,0.62):vec3(0.86,0.86,0.96);
+        c+=tint*disc*0.048*flareI*vf;
+      }
+      float ring=abs(length(uv-luv)-0.30);
+      c+=vec3(0.48,0.68,1.0)*smoothstep(0.012,0.0,ring)*0.045*flareI*vf;
+      float bright=luma(texture(uBloom,uv).rgb);
+      c+=texture(uDirt,uv).rgb*bright*flareI*0.55*vf;
+    }
+    /* Anamorphic bloom: a thin horizontal streak around highlights. */
+    vec3 streak=texture(uBloom,uv).rgb;
+    for(int i=1;i<=3;i++){
+      float o=float(i)*0.014;
+      streak+=texture(uBloom,uv+vec2(o,0.0)).rgb*0.30;
+      streak+=texture(uBloom,uv-vec2(o,0.0)).rgb*0.30;
+    }
+    c+=streak*vec3(0.30,0.52,0.95)*0.15*vf;
+    /* Far depth of field: only genuinely distant surfaces soften, giving the
+       horizon and far islands atmospheric separation instead of a crisp cut. */
+    float dz=sceneZ(texture(uDepth,uv).r);
+    /* Skip the celestial sphere so stars stay points and the horizon keeps
+       its atmospheric softness without blurring the whole sky. */
+    float farAmt=smoothstep(130.0,430.0,dz)*(1.0-smoothstep(520.0,600.0,dz))*0.38*vf;
+    if(farAmt>0.01){
+      vec2 t=1.0/uRes*2.4;
+      vec3 b=(texture(uScene,uv+vec2(t.x,t.y)).rgb+texture(uScene,uv+vec2(-t.x,t.y)).rgb
+             +texture(uScene,uv+vec2(t.x,-t.y)).rgb+texture(uScene,uv+vec2(-t.x,-t.y)).rgb)*0.25;
+      c=mix(c,b,farAmt);
+    }
+  }
+  /* Night grade: a cool shift in the shadows and a whisper of lifted black, so
+     the scene reads as moonlight instead of underexposed daylight. */
+  float nl=luma(c);
+  c=mix(c,c*vec3(0.90,0.97,1.10),uNight*0.55);
+  c+=vec3(0.002,0.004,0.009)*uNight*(1.05-clamp(nl,0.0,1.0));
   if(uSubmerge>0.001){
     float distance=sceneZ(texture(uDepth,uv).r);
     float haze=1.0-exp(-distance*0.038);
     vec3 rd=normalize(uCamF+vNdc.x*uTanAsp.x*uTanAsp.y*uCamR+vNdc.y*uTanAsp.x*uCamU);
     float up=smoothstep(-0.45,0.75,rd.y);
     float rays=pow(max(0.0,sin(rd.x*10.0+rd.z*7.0+uWaterTime*0.13)),12.0)*up;
-    vec3 water=mix(vec3(0.014,0.075,0.09),vec3(0.04,0.20,0.22),up)+vec3(0.012,0.035,0.03)*rays;
+    vec3 water=mix(vec3(0.014,0.075,0.09),vec3(0.04,0.20,0.22),up)+vec3(0.012,0.035,0.03)*rays*(1.0+0.9*vf);
     vec3 tinted=c*vec3(0.66,0.91,0.97);
     c=mix(c,mix(tinted,water,haze*0.82),uSubmerge);
   }

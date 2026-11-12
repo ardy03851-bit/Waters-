@@ -20,7 +20,7 @@ function updatePrecip(sdt){
   for(let i=0;i<n;i++){
     const x=(Math.random()*2-1)*(RR-0.6), z=(Math.random()*2-1)*(RR-0.6);
     addRipple(x,z,0.16,-0.011);
-    if(Math.random()<0.10&&pCount<MAXP*0.8){
+    if(Math.random()<0.10*(1+0.25*(typeof vfxLevel==='number'?vfxLevel:0))&&pCount<MAXP*0.8){
       const a=Math.random()*6.2832, o=0.2+Math.random()*0.5;
       emit(x,surfH(x,z,simT)+0.02,z,Math.cos(a)*o,0.9+Math.random()*0.9,Math.sin(a)*o,0.006+0.006*Math.random(),0.28,0.2,1.2,1,1);
     }
@@ -28,7 +28,8 @@ function updatePrecip(sdt){
 }
 function drawPrecip(Hh){
   const p=envS.precip; if(p<0.004) return;
-  const snow=envS.snow, n=Math.min(PRECIP_MAX*1.5,Math.floor(PRECIP_MAX*Math.pow(Math.min(1,p),1.15)*(snow?0.65:1)*(hqMode?1.4:1))); if(n<1) return;
+  const snow=envS.snow, dens=(hqMode?1.4:1)*(1+0.10*(typeof vfxLevel==='number'?vfxLevel:0));
+  const n=Math.min(PRECIP_MAX*1.5,Math.floor(PRECIP_MAX*Math.pow(Math.min(1,p),1.15)*(snow?0.65:1)*dens)); if(n<1) return;
   gl.useProgram(pPrecip); setSky(pPrecip);
   gl.uniformMatrix4fv(L(pPrecip,'uVP'),false,VP);
   gl.uniform3fv(L(pPrecip,'uCam'),eye); gl.uniform3fv(L(pPrecip,'uCamR'),camR); gl.uniform3fv(L(pPrecip,'uCamU'),camU);

@@ -66,6 +66,15 @@ window.Aqua={
   },
   /* read-only view of the plant cutout atlas, handy from the console */
   get plants(){ return {kinds:PLANT_KINDS.map(k=>k.name),loaded:plantAtlas.loaded,layers:plantAtlas.layers,size:plantAtlas.size}; },
+  /* advanced VFX: Aqua.vfx('cinematic') · Aqua.vfx() reports the level */
+  vfx(level){
+    if(level===undefined) return {level:VFX_LEVELS[vfxLevel],levels:VFX_LEVELS.slice()};
+    /* Keep the stored preference in step with the level actually applied, so
+       an unknown name cannot leave the settings panel with nothing selected. */
+    const applied=VFX_LEVELS[vfxIndex(level)];
+    userSet('vfx',applied);
+    return {level:VFX_LEVELS[vfxLevel],requested:level};
+  },
   /* post effects: Aqua.post('bloom',false) */
   post(name,on){
     if(name==='bloom') userSet('bloom',on===undefined?!S.bloom:!!on);

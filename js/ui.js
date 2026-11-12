@@ -30,7 +30,7 @@ const DEFAULTS={
   quakeStrength:1, quakeMotion:reduceMotion?0:1, quakeAuto:false, quakeInterval:90,
   fov:50, orbit:false, follow:false, swimSpeed:1, lookSensitivity:1,
   quality:'auto', hq:false, splash:1, motionBlur:!reduceMotion, blur:1, lensFx:true,
-  bloom:true, fxaa:true, stats:true, sound:false, volume:0.7
+  bloom:true, fxaa:true, vfx:'enhanced', stats:true, sound:false, volume:0.7
 };
 /* weather = a consistent set of physical quantities */
 const WEATHERS={
@@ -57,7 +57,8 @@ const SCENES=[
   {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true,shipClass:4}},
   {name:'Coral atoll',grad:'linear-gradient(160deg,#7fe0e0,#c9f4ef 52%,#0f8f9a)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,islands:true,islandBiome:'atoll',islandPreset:'cinematic'}},
   {name:'Fjord dawn',grad:'linear-gradient(160deg,#33465c,#a8bcc4 54%,#16323f)',set:{season:0,weather:'fog',hour:'sunrise',dayCycle:0,islands:true,islandBiome:'fjord',islandPreset:'epic'}},
-  {name:'Cinematic coast',grad:'linear-gradient(160deg,#2c3f6b,#f0a868 55%,#40352f)',set:{season:2,weather:'partly',hour:'sunset',dayCycle:0,islands:true,islandPreset:'cinematic'}}
+  {name:'Cinematic coast',grad:'linear-gradient(160deg,#2c3f6b,#f0a868 55%,#40352f)',set:{season:2,weather:'partly',hour:'sunset',dayCycle:0,islands:true,islandPreset:'cinematic'}},
+  {name:'Moonlit shallows',grad:'linear-gradient(160deg,#050d26,#123a5c 55%,#04121a)',set:{season:1,weather:'clear',hour:0.5,dayCycle:0,islands:true,islandBiome:'tropical',islandPreset:'cinematic',vfx:'cinematic'}}
 ];
 const pct=v=>Math.round(v*100)+'%';
 function fogLabel(v){ const m=20000*Math.pow(40/20000,clamp(v,0,1)); return m>=1000?(m/1000).toFixed(m>=10000?0:1)+' km':Math.round(m/5)*5+' m'; }
@@ -113,7 +114,7 @@ const CONTROLS=[
   {tab:'islands',t:'range',k:'islandCascades',label:'Cascades',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'toggle',k:'islandBirds',label:'Seabirds',sub:'Flocks shelter during storms and at night'},
   {tab:'islands',t:'range',k:'islandWind',label:'Vegetation wind response',min:0,max:1.5,step:0.05,fmt:pct},
-  {tab:'islands',t:'range',k:'islandSurf',label:'Cliff surf',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandSurf',label:'Coastal surf',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'note',text:'The coast, its plants and its wildlife are seeded. Terrain and cinematic controls rebuild the coast; planting controls update only their own details. Surf, breakers and the waterline wash follow the generated shoreline exactly.'},
 
   {tab:'sky',t:'info'},
@@ -151,6 +152,8 @@ const CONTROLS=[
   ...(safeGraphics?[{tab:'system',t:'note',text:'Low-memory mode is active for this visit. Resolution and enhanced graphics are limited; your saved preferences are retained.'}]:[]),
   {tab:'system',t:'seg',k:'quality',label:'Render quality',cols:5,opts:[['auto','Auto'],['low','Low'],['medium','Med'],['high','High'],['ultra','Ultra']]},
   {tab:'system',t:'toggle',k:'hq',label:'Improved graphics mode',sub:'Full-resolution reflections, denser spray and rain, finer water detail'},
+  {tab:'system',t:'seg',k:'vfx',label:'Advanced VFX',cols:3,opts:[['off','Off'],['enhanced','Enhanced'],['cinematic','Cinematic']]},
+  {tab:'system',t:'note',text:'Advanced VFX upgrades every effect at once: volumetric sun/moon shafts, lens flare, dirt and anamorphic bloom, far depth of field, breaker aerosol, denser spray, and night plankton and fireflies. Cinematic adds a wider bloom and stronger shafts.'},
   {tab:'system',t:'range',k:'splash',label:'Splash detail',min:0.3,max:1.5,step:0.05,fmt:pct},
   {tab:'system',t:'toggle',k:'motionBlur',label:'Motion blur',sub:'Depth-aware camera and object motion'},
   {tab:'system',t:'range',k:'blur',label:'Blur strength',min:0.2,max:2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
@@ -283,6 +286,10 @@ function apply(k){
     case 'orbit': autoOrbit=v; break;
     case 'follow': followBall=v; break;
     case 'quality': setQuality(v); break;
+    case 'vfx':
+      setVFX(v);
+      if(safeGraphics&&v!=='off'&&!settingsBooting) toast('Advanced VFX is limited in low-memory mode');
+      havePrev=false; break;
     case 'hq':
       hqMode=v&&!safeGraphics;
       if(rendererStarted) resize(true);
@@ -329,6 +336,7 @@ function applyScene(sc){
   if(o.islands!==undefined) setVal('islands',o.islands);
   if(o.islandBiome) setVal('islandBiome',o.islandBiome);
   if(o.islandPreset) islandPreset(o.islandPreset,true);
+  if(o.vfx) setVal('vfx',o.vfx);
   if(o.ship!==undefined){ setVal('ship',o.ship); if(o.ship){if(S.follow)setVal('follow',false);resetCamera('ship');} }
   if(o.shipClass!==undefined) setVal('shipClass',o.shipClass);
   setVal('season',o.season); setWeather(o.weather,true);

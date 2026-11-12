@@ -204,6 +204,8 @@ function render(){
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
   if(submerge<0.5) drawPrecip(Hh);
+  /* Night fireflies: additive glow points over the islands, skipped by day. */
+  if(typeof drawVFX==='function') drawVFX();
   postPass(submerge);
   Hooks.run('render');
 }
@@ -275,11 +277,15 @@ function drawBloom(){
   gl.useProgram(pBloom);
   gl.uniform1i(L(pBloom,'uSrc'),0);
   gl.uniform2f(L(pBloom,'uTexel'),1/bloom.w,1/bloom.h);
+  gl.uniform1f(L(pBloom,'uSpread'),1);
   gl.bindVertexArray(emptyVAO);
-  /* 1: bright pass from the resolved frame into a */
+  /* 1: bright pass from the resolved frame into a. Moonlight sits below the
+     daytime threshold, so advanced VFX lowers it after dark. */
+  const threshold=(vfxLevel>0&&sky.night>0.35)?0.46:BLOOM_THRESHOLD;
   gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.a.fb); gl.viewport(0,0,bloom.w,bloom.h);
-  gl.uniform1f(L(pBloom,'uMode'),0); gl.uniform1f(L(pBloom,'uThreshold'),BLOOM_THRESHOLD);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
+  gl.uniform1f(L(pBloom,'uMode'),0); gl.uniform1f(L(pBloom,'uThreshold'),threshold);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,post.color);
   gl.drawArrays(gl.TRIANGLES,0,3);
   /* 2: horizontal blur a -> b */
   gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.b.fb);
@@ -291,6 +297,16 @@ function drawBloom(){
   gl.uniform2f(L(pBloom,'uDir'),0,1);
   gl.bindTexture(gl.TEXTURE_2D,bloom.b.color);
   gl.drawArrays(gl.TRIANGLES,0,3);
+  /* 4-5: a second, wider pyramid step for cinematic VFX. */
+  if(vfxLevel>=2){
+    gl.uniform1f(L(pBloom,'uSpread'),2.2);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.b.fb);
+    gl.uniform2f(L(pBloom,'uDir'),1,0); gl.bindTexture(gl.TEXTURE_2D,bloom.a.color);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.a.fb);
+    gl.uniform2f(L(pBloom,'uDir'),0,1); gl.bindTexture(gl.TEXTURE_2D,bloom.b.color);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+  }
   gl.bindVertexArray(null);
 }
 
@@ -313,15 +329,24 @@ function postPass(submerge=cameraSubmerge()){
   gl.uniform3fv(L(pPost,'uCamF'),camF); gl.uniform3fv(L(pPost,'uCamR'),camR); gl.uniform3fv(L(pPost,'uCamU'),camU);
   gl.uniformMatrix4fv(L(pPost,'uPrevVP'),false,prevVPm);
   gl.uniform1f(L(pPost,'uMB'),mb); gl.uniform1f(L(pPost,'uHasVelocity'),hasVelocity?1:0);
-  gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0); gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
+  /* Advanced VFX leans a little further into the lens: a touch more
+     aberration and vignette, and a fine grain even without improved mode. */
+  const lensBoost=1+0.30*vfxLevel;
+  gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024*lensBoost:0);
+  gl.uniform1f(L(pPost,'uVig'),lensFxOn?Math.min(0.30,0.18*lensBoost):0);
   gl.uniform1f(L(pPost,'uSubmerge'),submerge);gl.uniform1f(L(pPost,'uWaterTime'),simT);
-  gl.uniform1f(L(pPost,'uBloomAmt'),bloomOn&&bloom?bloomAmt:0);
+  gl.uniform1f(L(pPost,'uBloomAmt'),bloomOn&&bloom?bloomAmt*(1+0.12*vfxLevel):0);
   gl.uniform1f(L(pPost,'uFXAA'),fxaaOn?1:0);
-  gl.uniform1f(L(pPost,'uGrain'),hqMode?grainAmt:0);
+  gl.uniform1f(L(pPost,'uGrain'),(hqMode?grainAmt:0)+(vfxLevel>=2?0.007:0));
+  gl.uniform1f(L(pPost,'uNight'),sky.night); gl.uniform1f(L(pPost,'uVFX'),vfxLevel);
+  gl.uniform3fv(L(pPost,'uSun'),sky.sun); gl.uniform3fv(L(pPost,'uMoon'),sky.moon);
+  gl.uniform3fv(L(pPost,'uSunCol'),sky.sunCol);
   gl.uniform1i(L(pPost,'uScene'),0); gl.uniform1i(L(pPost,'uDepth'),1);
   gl.uniform1i(L(pPost,'uVelocity'),2); gl.uniform1i(L(pPost,'uMotionTile'),3);
-  gl.uniform1i(L(pPost,'uBloom'),4);
+  gl.uniform1i(L(pPost,'uBloom'),4); gl.uniform1i(L(pPost,'uDirt'),5);
   gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D,bloom?bloom.a.color:post.color);
+  const dirtTex=(typeof vfxTex!=='undefined'&&vfxTex.dirt)?vfxTex.dirt:post.color;
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D,dirtTex);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,post.depth);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,motion.color);

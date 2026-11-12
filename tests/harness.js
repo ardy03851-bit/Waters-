@@ -19,7 +19,7 @@ const vm=require('node:vm');
 const root=path.join(__dirname,'..');
 const read=name=>fs.readFileSync(path.join(root,'js',name+'.js'),'utf8');
 const SCRIPTS=['core','engine','shaders','ocean','materials','environment','splash','surf','islands',
-  'island-details','island-scenery','weather','physics','kit','boats','ship','quake','input','explore','voyage','audio','render','ui'];
+  'island-details','island-scenery','vfx','weather','physics','kit','boats','ship','quake','input','explore','voyage','audio','render','ui'];
 
 function elementStub(id){
   const children=[];

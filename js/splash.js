@@ -42,7 +42,8 @@ function emit(x,y,z,vx,vy,vz,size,life,kind,drag,grav,gen){
 function mist(x,y,z,vx,vy,vz,size,life){ emit(x,y,z,vx,vy,vz,size,life,P_MIST,2.6,0.10,1); }
 /* thin out new effects smoothly when the particle pool is filling up */
 let splashAmt=1;   /* user setting: splash detail */
-function budget(){ return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt*(hqMode?1.35:1); }
+function budget(){ const vfx=(typeof vfxLevel==='number'?vfxLevel:0);
+  return clamp(1.35-1.3*pCount/MAXP,0.12,1)*splashAmt*(hqMode?1.35:1)*(1+0.16*vfx); }
 
 const splashEvents=[], cliffEvents=[];
 
@@ -67,7 +68,7 @@ function cliffSplash(x,y,z,nx,nz,power){
       nx*out+tx*(rnd()-0.5)*3,6.0+rnd()*11.0*power,nz*out+tz*(rnd()-0.5)*3,
       0.008+0.022*rnd(),1.1+rnd()*1.1,0.12+0.55*rnd(),0.2+0.45*rnd(),1,1);
   }
-  for(let i=0;i<Math.floor(12*power*q);i++){
+  for(let i=0;i<Math.floor(12*power*q*(1+0.6*(typeof vfxLevel==='number'?vfxLevel:0)));i++){
     const along=(rnd()-0.5)*width;
     mist(x+tx*along+nx*rnd(),y+0.4+rnd()*1.6,z+tz*along+nz*rnd(),
       nx*(0.5+rnd())+windX*0.15,0.8+rnd()*2.2,nz*(0.5+rnd())+windZ*0.15,
@@ -294,7 +295,10 @@ function packParticles(){
     for(let i=0;i<pCount;i++){
       const kind=PKind[i], isMist=kind>1.5; if(isMist!==(pass===0)) continue;
       const age=1-PLife[i]/PMax[i]; let size=PSize[i], alpha;
-      if(isMist){ size*=1+1.5*age; alpha=0.15*Math.min(1,age*9)*Math.pow(1-age,1.3); }
+      if(isMist){
+        if(kind>4.5){ size*=1+0.25*age; alpha=0.85*Math.min(1,age*8)*Math.pow(1-age,1.6); }
+        else { size*=1+1.5*age; alpha=0.15*Math.min(1,age*9)*Math.pow(1-age,1.3); }
+      }
       else { size*=1+0.55*age*kind; alpha=Math.min(1,PLife[i]/0.3)*(1-0.55*age*kind); }
       partData[o]=PX[i];partData[o+1]=PY[i];partData[o+2]=PZ[i];
       partData[o+3]=PVX[i];partData[o+4]=PVY[i];partData[o+5]=PVZ[i];
