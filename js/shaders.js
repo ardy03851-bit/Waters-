@@ -2,7 +2,7 @@
 /* ============================================================
    Shaders
    ============================================================ */
-const HDR = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n';
+const HDR = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp sampler2DArray;\n';
 
 const COMMON = `
 uniform sampler2D uDetail;
@@ -153,7 +153,7 @@ out vec4 o;
 uniform vec3 uCam,uCamR,uCamF;
 uniform float uRipR,uRipN,uA0;
 uniform vec2 uRes,uNF,uWind;
-uniform float uHQ,uIslands,uSeaState,uUnderwater;
+uniform float uHQ,uIslands,uSeaState,uUnderwater,uShoreBreak,uMist;
 uniform sampler2D uRip,uScene,uSceneD,uRefl,uIslandMap;
 float linZ(float d){float z=2.0*d-1.0;return 2.0*uNF.x*uNF.y/(uNF.y+uNF.x-z*(uNF.y-uNF.x));}
 void main(){
@@ -236,20 +236,40 @@ void main(){
 
   /* The island height/distance map adds clear, shoaling water and a broken
      wash along beaches and cliffs; deep open water remains unchanged. */
-  float shoreFoam=0.0;
+  float shoreFoam=0.0, coastDist=80.0;
   if(uIslands>0.5){
     vec2 imuv=vWorld.xz/160.0+0.5;
     if(all(greaterThan(imuv,vec2(0.0)))&&all(lessThan(imuv,vec2(1.0)))){
-      vec2 land=texture(uIslandMap,imuv).rg;
+      vec4 land=texture(uIslandMap,imuv);
       float floorY=land.r*40.0-12.0;
       float depth=max(vWorld.y-floorY,0.0), coast=land.g*12.0;
-      float shallow=(1.0-smoothstep(0.8,6.0,depth))*(1.0-smoothstep(2.5,10.0,coast));
-      body=mix(body,body*0.72+uTurq*(0.11+0.20*uAmbLum)+vec3(0.012,0.032,0.021),shallow*0.58);
-      /* Wave fronts advance and dissolve in a broken, uneven coastal wash. */
-      float noise=texture(uDetail,vWorld.xz*0.18+vec2(uTime*0.009,-uTime*0.006)).a;
-      float wavelet=pow(0.5+0.5*sin(coast*2.4-uTime*(1.15+uSeaState*0.7)+noise*3.4),2.0);
-      float wash=1.0-smoothstep(0.15,2.7+uSeaState*1.8,coast);
-      shoreFoam=wash*(0.30+0.40*uSeaState)*(0.45+0.55*wavelet);
+      coastDist=coast;
+      vec2 sn=land.ba*2.0-1.0;
+      float sl=length(sn);
+      sn=sl>1e-4?sn/sl:vec2(0.0,1.0);
+      /* 0 when the swell runs parallel to the shore, 1 when it hits it head
+         on, so the same sea breaks hard on an exposed headland and laps
+         gently inside a cove. */
+      float facing=max(0.0,-dot(sn,uWind));
+      float shallow=(1.0-smoothstep(0.7,6.5,depth))*(1.0-smoothstep(2.0,13.0,coast));
+      body=mix(body,body*0.70+uTurq*(0.12+0.24*uAmbLum)+vec3(0.014,0.040,0.026),shallow*0.62);
+      /* Breakers run shoreward as bands of white water. Their phase follows
+         the signed distance to land, so they bend into coves and wrap around
+         headlands instead of pulsing as a ring. */
+      float n1=texture(uDetail,vWorld.xz*0.16+vec2(uTime*0.010,-uTime*0.007)).a;
+      float n2=texture(uDetail,vWorld.xz*0.47+vec2(-uTime*0.017,uTime*0.011)).a;
+      float warp=(n1-0.5)*3.2+(n2-0.5)*1.1+dot(vWorld.xz,sn)*0.035;
+      /* Coast is distance to land, so a crest that gains phase with time
+         moves toward smaller coast: the white water rolls shoreward. */
+      float phase=coast*1.65-warp+uTime*(0.90+1.70*uSeaState);
+      float crest=pow(0.5+0.5*sin(phase),7.0);
+      float breakZone=(1.0-smoothstep(0.4,2.8+3.4*uSeaState,coast))*smoothstep(0.05,0.7,depth);
+      float strength=uShoreBreak*(0.55+0.45*uSeaState)*(0.42+0.58*facing);
+      shoreFoam=breakZone*crest*strength*1.35;
+      /* Swash: the broad wash that runs up the beach at the waterline. */
+      float swash=1.0-smoothstep(0.0,1.6+1.9*uSeaState,coast);
+      float lace=smoothstep(0.34,0.62,n1*0.60+n2*0.40+0.10);
+      shoreFoam=max(shoreFoam,swash*strength*(0.22+0.44*lace)*(0.45+0.55*crest));
     }
   }
 
@@ -311,6 +331,9 @@ void main(){
   float fog=max(smoothstep(100.0,580.0,dist),1.0-exp(-dist*uFogD));
   vec3 hd2=normalize(vec3(vWorld.x-uCam.x,0.02,vWorld.z-uCam.z));
   col=mix(col,skyCol(hd2,0.0),fog);
+  /* Low coastal mist over the shallows, matching the veil on the land. */
+  float coastMist=uMist*(1.0-exp(-dist*0.0035))*(1.0-smoothstep(5.0,44.0,coastDist));
+  col=mix(col,uFogCol*1.02,clamp(coastMist*0.55,0.0,0.5));
 
   vec3 outc=tonemap(col)+(hash12(gl_FragCoord.xy)-0.5)/255.0;
   o=vec4(outc,1.0);

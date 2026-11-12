@@ -59,7 +59,9 @@ test('the Mossland biome builds terraced terrain, plants and cascades without ar
       min:Math.min(...heights),trees:islands.treeCount,
       scenery:{ferns:islands.scenery.ferns.count,reeds:islands.scenery.reeds.count,
         mushrooms:islands.scenery.mushrooms.count,cushions:islands.scenery.cushions.count,
+        plants:islands.scenery.plants.count,stacks:islands.details.stacks.count,
         cascades:islands.scenery.cascades.count},
+      plants:{kinds:PLANT_KINDS.length,layers:plantAtlas.layers,size:plantAtlas.size},
       resolution:land[0].n};
   })()`,h.ctx,{timeout:60000});
   assert.equal(result.count,3);
@@ -68,6 +70,10 @@ test('the Mossland biome builds terraced terrain, plants and cascades without ar
   assert.ok(result.trees>0,'mossland keeps some pines');
   assert.ok(result.scenery.ferns>0&&result.scenery.reeds>0&&result.scenery.mushrooms>0&&result.scenery.cushions>0,
     'all four new plant layers are planted');
+  assert.ok(result.scenery.plants>0,'the generated cutout species are planted');
+  assert.ok(result.plants.kinds>=13&&result.plants.layers===result.plants.kinds&&result.plants.size>=256,
+    'the plant cutouts occupy one bounded texture array');
+  assert.ok(result.scenery.stacks>=0,'sea-stack placement is bounded and safe with the default setting');
   assert.ok(result.resolution>=130,'the dense mossland heightfield is used');
   /* The drawn frame must still survive a regenerated coast. */
   const frame=h.frames.shift(); frame(1400);
