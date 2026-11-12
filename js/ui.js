@@ -20,7 +20,7 @@ function toast(msg){
    ============================================================ */
 const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
-  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, shipClass:0, islandSeed:0,
+  type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, boats:false, shipClass:0, islandSeed:0,
   islandStyle:'wild', islandBiome:'mixed', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1, islandFeatures:1,
   islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandFlowers:1, islandLandmarks:1, islandCascades:1,
   islandBirds:true, islandWind:1, islandSurf:1,
@@ -72,6 +72,7 @@ const CONTROLS=[
   {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
   {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
   {tab:'scene',t:'toggle',k:'ship',label:'Sailing ship',sub:'A detailed ship to sail or explore'},
+  {tab:'scene',t:'toggle',k:'boats',label:'Harbour traffic',sub:'Modern motor boats, a tug, a coaster and buoys around the bay'},
   {tab:'scene',t:'seg',k:'shipClass',label:'Ship',cols:4,opts:SHIP_CLASSES.map((c,i)=>[i,c.short])},
   {tab:'scene',t:'note',id:'shipNote',text:'Each class re-proportions the same CC0 hull and rig, with its own timber, canvas and handling. Hull, deck and ball contacts stay exact for every class.'},
   {tab:'scene',t:'buttons',items:[['Take the helm',()=>enterSailing()],['Swim & explore',()=>enterExplore()],['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
@@ -147,7 +148,7 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
   {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
-  {tab:'system',t:'note',text:'Shortcuts: Space drop · B sail · I islands · U explore · Q seaquake · J island quake · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema · O orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
+  {tab:'system',t:'note',text:'Shortcuts: Space drop · B sail · N harbour traffic · I islands · U explore · Q seaquake · J island quake · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema · O orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
 const TABS=[['scene','Scene'],['islands','Islands'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
@@ -221,6 +222,7 @@ function apply(k){
     case 'launch': launchMode=v; break;
     case 'throwSpeed': throwSpeed=v; break;
     case 'ship': setShipEnabled(v); resetCamera(v?'ship':'islands'); break;
+    case 'boats': setBoatsEnabled(v); break;
     case 'shipClass': setShipClass(v); break;
     case 'islands':
       cancelIslandRebuild();
@@ -665,6 +667,7 @@ addEventListener('keydown',e=>{
   else if(k==='s') toggleSlow();
   else if(k==='c') clearAll();
   else if(k==='h') setDock($('dock').classList.contains('hidden'));
+  else if(k==='n'){ userSet('boats',!S.boats); toast(S.boats?'Harbour traffic on':'Harbour traffic off'); }
   else if(k==='g') setPanel(!$('panel').classList.contains('open'));
   else if(k==='p') togglePause();
   else if(k==='m') userSet('sound',!S.sound);
