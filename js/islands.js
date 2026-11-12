@@ -413,20 +413,39 @@ function makePlantAtlas(){
     const image=new Image();
     image.onload=()=>{
       if(gl.isContextLost()) return;
-      /* Normalise into a square canvas ourselves. WebGL is not required to
-         honour UNPACK_FLIP_Y_WEBGL for 3D/array uploads, so the atlas keeps
-         the image's natural orientation and the plant shader flips V when it
-         samples. That puts the plant's base at the bottom on every driver.
-         Stretching to a square is safe: the billboard restores the species'
-         true proportions from the aspect table. */
-      const canvas=document.createElement('canvas');
-      canvas.width=size; canvas.height=size;
-      const ctx=canvas.getContext('2d');
-      if(!ctx) return;
-      ctx.clearRect(0,0,size,size);
-      ctx.drawImage(image,0,0,size,size);
+      /* Array layers upload through texSubImage3D: texSubImage2D only has the
+         2D overload and rejects a layer index plus DOM source. Keeping the
+         image itself whenever it already fills the layer also avoids a
+         premultiplied-alpha round trip through a canvas. */
+      const square=()=>{
+        const canvas=document.createElement('canvas');
+        canvas.width=size; canvas.height=size;
+        const ctx=canvas.getContext('2d');
+        if(!ctx) return null;
+        ctx.clearRect(0,0,size,size);
+        /* Stretch to the square layer; the billboard restores the species'
+           true proportions from the aspect table. The shader flips V, so no
+           driver-dependent UNPACK_FLIP_Y_WEBGL is involved. */
+        ctx.drawImage(image,0,0,size,size);
+        return canvas;
+      };
+      let source=image;
+      if(image.width!==size||image.height!==size){
+        source=square(); if(!source) return;
+      }
       gl.activeTexture(gl.TEXTURE13); gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);
-      gl.texSubImage2D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,size,size,gl.RGBA,gl.UNSIGNED_BYTE,canvas);
+      try{
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,size,size,1,gl.RGBA,gl.UNSIGNED_BYTE,source);
+      }catch(err){
+        /* A driver that refuses DOM sources for array layers still accepts a
+           pixel buffer, so retry from canvas pixels instead of losing the
+           layer to a console error. */
+        if(source===image){ source=square(); if(!source) return; }
+        const ctx=source.getContext('2d');
+        if(!ctx) return;
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,size,size,1,gl.RGBA,gl.UNSIGNED_BYTE,
+          ctx.getImageData(0,0,size,size).data);
+      }
       gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
       plantAtlas.loaded++;
     };
