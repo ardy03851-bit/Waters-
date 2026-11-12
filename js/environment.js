@@ -23,7 +23,7 @@ const envS={cloud:0.4,precip:0,fog:0.04,wind:8,dx:Math.sin(1.1),dz:Math.cos(1.1)
   dec:23.44,air:24,water:20,deep:SEASONS[1].deep.slice(),turq:SEASONS[1].turq.slice(),tint:SEASONS[1].tint.slice(),snow:false,airT:24};
 const sky={sun:[0,1,0],moon:[0,-1,0],light:[0,1,0],sunCol:[1,1,1],zenith:[0,0,0],horizon:[0,0,0],glow:[0,0,0],fogCol:[0,0,0],
   sunDisc:[0,0,0],moonDisc:[0,0,0],ambLum:1,sunLum:3,cloudLo:0.6,storm:0,fogD:0.0002,night:0,exp:0.88,rough:0.4,rain:0,
-  cloudOff:[0,0],bolt:[0,0,0,0.6],elev:1};
+  cloudOff:[0,0],bolt:[0,0,0,0.6],elev:1,moonUp:0};
 let sea=0.38, seaT=0.38;
 const bolt={t:9,az:0,seed:0,top:0.6};
 let onLightning=null;   /* hook for the audio module */
@@ -97,6 +97,10 @@ function updateEnv(dt,sdt){
         gz=[0.12,0.14,0.17].map(v=>v*(0.4+day)*gl_*pd), gh=[0.33,0.36,0.40].map(v=>v*(0.5+0.5*day)*gl_*pd);
   z=lerp3(z,gz,dark*0.85).map(v=>v*(1-0.35*dark));
   h=lerp3(h,gh,dark*0.75);
+  /* Moonlight scattering lifts the whole night sky a touch and cools it. */
+  const ml=sstep(-0.06,-0.2,el)*sstep(0,0.12,sky.moon[1])*(1-ov);
+  z=[z[0]+0.004*ml,z[1]+0.008*ml,z[2]+0.018*ml];
+  h=[h[0]+0.008*ml,h[1]+0.013*ml,h[2]+0.024*ml];
   const gk=(1-day*0.8)*0.9*sstep(-0.32,-0.02,el)*(1-0.9*ov);
   sky.glow=[1.0*gk,0.5*gk,0.22*gk];
 
@@ -104,12 +108,16 @@ function updateEnv(dt,sdt){
   const sunRaw=2.9*(0.4+0.6*sstep(0,0.3,el))*sstep(-0.035,0.03,el);
   const sunI=sunRaw*direct;
   const moonUp=sstep(-0.06,-0.2,el)*sstep(0,0.12,sky.moon[1]);
-  const moonI=0.17*moonUp*direct;
+  sky.moonUp=moonUp;
+  /* A moonlit sea is never as black as the old curve implied; a little more
+     moon light and a faint blue lift in the sky make the night readable
+     without turning it into dusk. */
+  const moonI=0.22*moonUp*direct;
   if(sunI>=moonI){ sky.light=sky.sun; sky.sunCol=sunC.map(v=>v*sunI); sky.sunLum=sunI; }
   else { sky.light=sky.moon; sky.sunCol=[0.62*moonI,0.74*moonI,1.0*moonI]; sky.sunLum=moonI; }
   sky.sunDisc=sunC.map(v=>v*sunRaw*(1-ov));
-  sky.moonDisc=[0.90,0.95,1.0].map(v=>v*1.5*moonUp*(1-ov));
-  sky.ambLum=(lerp(0.035,0.3,tw)+0.7*day)*(1-0.42*ov-0.25*dark*envS.precip)+0.02*moonUp*(1-ov);
+  sky.moonDisc=[0.90,0.95,1.0].map(v=>v*1.9*moonUp*(1-ov));
+  sky.ambLum=(lerp(0.035,0.3,tw)+0.7*day)*(1-0.42*ov-0.25*dark*envS.precip)+0.035*moonUp*(1-ov);
   sky.night=sstep(-0.08,-0.3,el)*(1-sstep(0.3,0.9,envS.cloud));
   sky.exp=lerp(1.9,0.88,sstep(-0.3,0.08,el));
 
@@ -137,6 +145,8 @@ function setSky(p){
   gl.uniform1f(L(p,'uCloudLo'),sky.cloudLo); gl.uniform1f(L(p,'uExp'),sky.exp);
   gl.uniform1f(L(p,'uFogD'),sky.fogD); gl.uniform1f(L(p,'uNight'),sky.night);
   gl.uniform1f(L(p,'uRough'),sky.rough); gl.uniform1f(L(p,'uRain'),sky.rain);
+  /* Advanced VFX level: one number every effect shader can read. */
+  gl.uniform1f(L(p,'uVFX'),vfxLevel);
   gl.uniform3fv(L(p,'uSun'),sky.sun); gl.uniform3fv(L(p,'uMoon'),sky.moon); gl.uniform3fv(L(p,'uLight'),sky.light);
   gl.uniform3fv(L(p,'uSunCol'),sky.sunCol);
   gl.uniform3fv(L(p,'uZenith'),sky.zenith); gl.uniform3fv(L(p,'uHorizon'),sky.horizon); gl.uniform3fv(L(p,'uGlow'),sky.glow);

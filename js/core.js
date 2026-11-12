@@ -15,6 +15,10 @@ if(gl.isContextLost()) window.AquaBoot.contextLost();
 /* ============================================================
    Constants & small math helpers
    ============================================================ */
+/* Advanced VFX level (0/1/2). Declared with the shared constants so modules
+   that run without vfx.js — tests, embedded builds — still read a number. */
+var VFX_LEVELS=['off','enhanced','cinematic'];
+var vfxLevel=0;
 const G=9.81, RHO_W=1000, RHO_A=1.2;
 const clamp=(x,a,b)=>x<a?a:x>b?b:x;
 const lerp=(a,b,t)=>a+(b-a)*t;

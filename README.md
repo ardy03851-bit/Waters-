@@ -21,7 +21,33 @@ python3 -m http.server 8000 --bind 0.0.0.0
 Then open `http://localhost:8000/`. Edit any file under `js/`, `css/` or
 `assets/` and reload the page to see the change. Press **G** for settings, then
 open the **Islands** tab and use **Cinematic coast** to see the new land
-generation, or choose the **Coral atoll** scene from the Scene tab.
+generation, or choose the **Coral atoll** scene from the Scene tab. For the
+night and effects pass, choose the **Moonlit shallows** scene or set
+**Settings → System → Advanced VFX** to **Cinematic**.
+
+## Night and advanced VFX
+
+**Settings → System → Advanced VFX** is one master control over every effect:
+
+| Level | What it adds |
+| --- | --- |
+| Off | The original render path. Every advanced term is skipped. |
+| Enhanced | Volumetric sun/moon shafts, lens flare, lens dirt and anamorphic bloom, far depth of field, finer foam and breaker aerosol, denser spray/rain and night fireflies with bioluminescent plankton. |
+| Cinematic | The same at full strength, plus a wider two-step bloom pyramid, stronger shafts/flare and a little more grain. |
+
+The night itself was rebuilt: two star layers with colour temperature and
+twinkle, a faint galactic band with dust lanes, the occasional shooting star,
+a layered moon halo, night airglow, a cool lift to the sky and ambient terms,
+a broad moon path on the water and glowing surf foam. Clear nights also bring
+seeded fireflies over the islands and cyan plankton motes in the wash, while
+the harbour fleet and the ship show warm cabin lamps, blinking mastheads and a
+red port light.
+
+Everything is a single number (`uVFX`, 0/1/2) shared by the shaders and the
+particle/weather budgets, and low-memory mode forces it off. The lens-dirt
+plate is a small local asset (`assets/vfx/lens-dirt.png`); if it cannot load,
+the flare simply loses its dust and everything else keeps working. Details and
+the performance envelope are in [`docs/vfx-and-night.md`](docs/vfx-and-night.md).
 
 ## Balls and capture
 

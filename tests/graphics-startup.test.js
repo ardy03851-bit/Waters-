@@ -64,8 +64,12 @@ test('startup completes in order and reports missing scripts or WebGL clearly',(
   while(f.ctx.AquaBoot.state==='loading') f.scripts.at(-1).onload();
   assert.equal(f.ctx.AquaBoot.state,'running');
   assert.equal(starts,1);
-  assert.equal(f.scripts.length,23);
+  assert.equal(f.scripts.length,24);
   assert.ok(f.scripts.findIndex(s=>s.src==='js/island-scenery.js')>f.scripts.findIndex(s=>s.src==='js/island-details.js'));
+  /* VFX shaders need the sky/plant modules and must exist before the renderer
+     that calls drawVFX and feeds the post pass. */
+  assert.ok(f.scripts.findIndex(s=>s.src==='js/vfx.js')>f.scripts.findIndex(s=>s.src==='js/island-scenery.js'));
+  assert.ok(f.scripts.findIndex(s=>s.src==='js/vfx.js')<f.scripts.findIndex(s=>s.src==='js/render.js'));
   /* The boat fleet needs the shader helpers and the wave sampler, and must be
      defined before the renderer that draws it. */
   assert.ok(f.scripts.findIndex(s=>s.src==='js/boats.js')>f.scripts.findIndex(s=>s.src==='js/shaders.js'));

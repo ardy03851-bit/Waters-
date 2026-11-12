@@ -937,7 +937,7 @@ function updateIslandSurf(dt){
   }
   if(hit&&hit.steep){
     hit.cool=simT+3.0+Math.random()*2;
-    islands.nextCrash=simT+(0.32+Math.random()*0.38)/Math.max(0.35,strength);
+    islands.nextCrash=simT+(0.32+Math.random()*0.38)/Math.max(0.35,strength)/(1+0.10*(typeof vfxLevel==='number'?vfxLevel:0));
     const power=clamp(((sea-0.42)*1.4+sky.storm*0.3)*strength,0.35,1.25);
     cliffSplash(hit.x,surfH(hit.x,hit.z,simT),hit.z,hit.nx,hit.nz,power);
     if(typeof audioCliff==='function') audioCliff(power,hit.x,hit.z);
@@ -946,7 +946,7 @@ function updateIslandSurf(dt){
      tenths of a second, independent of the plume budget. This is what makes
      the sea read as racing toward land rather than pulsing at a few points. */
   if(strength>0.01&&sea>0.30&&simT>=islands.shoreClock){
-    islands.shoreClock=simT+(0.62-0.26*clamp(sea,0,1))/Math.max(0.35,strength);
+    islands.shoreClock=simT+(0.62-0.26*clamp(sea,0,1))/Math.max(0.35,strength)/(1+0.16*(typeof vfxLevel==='number'?vfxLevel:0));
     let shore=null,shoreBest=-1;
     for(const p of islands.coast){
       if(p.steep) continue;

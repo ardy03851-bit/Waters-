@@ -129,7 +129,8 @@ void main(){
   vec3 V=normalize(uCam-vWorld);
   float back=pow(max(dot(-V,uLight),0.0),3.0);
   vec3 water=vec3(0.80,0.89,0.92)*(0.28+0.52*uAmbLum+0.12*uStorm)
-             +uSunCol*(0.035+0.08*back);
+             +uSunCol*(0.035+0.08*back)
+             +vec3(0.04,0.52,0.48)*uNight*(0.35+0.65*lace);
   float fresnel=pow(1.0-abs(dot(faceN,V)),3.0);
   vec3 skyRefl=skyCol(reflect(-V,faceN),0.0);
   water=mix(water,skyRefl,0.20*fresnel);
@@ -187,7 +188,8 @@ void main(){
   float lace=smoothstep(0.43,0.68,n+edge*0.12);
   float a=edge*lace*(1.0-smoothstep(0.25,1.0,vAge))*0.48;
   if(a<0.005) discard;
-  vec3 col=vec3(0.85,0.91,0.92)*(0.28+0.55*uAmbLum+0.13*uStorm)+uSunCol*0.08;
+  vec3 col=vec3(0.85,0.91,0.92)*(0.28+0.55*uAmbLum+0.13*uStorm)+uSunCol*0.08
+          +vec3(0.05,0.55,0.50)*uNight*(0.30+0.70*lace);
   col=mix(col,uFogCol,1.0-exp(-length(uCam-vWorld)*uFogD));
   o=vec4(tonemap(col)*a,a);
 }`;
@@ -253,6 +255,23 @@ function spawnShoreWash(x,z,nx,nz,power,steep){
   const width=(steep?1.8:2.6)+2.9*power;
   putSurf(coastFoam,MAX_COAST_FOAM,{x,y,z,width,nx,nz,power:clamp(power,0.15,1.2),kind:0,
     age:0,life:2.8+2.6*power,seed:Math.random(),layer:1});
+  if(typeof vfxNightGlow!=='function') return;
+  const vfx=typeof vfxLevel==='number'?vfxLevel:0;
+  /* Advanced VFX: aerosol off the lip, plus cold plankton motes after dark. */
+  if(vfx>0&&typeof mist==='function'&&Math.random()<0.55){
+    mist(x+nx*0.7+(Math.random()-0.5)*width,y+0.30,z+nz*0.7+(Math.random()-0.5)*width,
+      nx*(0.25+Math.random()*0.55),0.35+Math.random()*0.85,nz*(0.25+Math.random()*0.55),
+      0.20+Math.random()*0.30,1.1+Math.random()*1.3);
+  }
+  const glow=vfxNightGlow();
+  if(glow>0.05&&typeof emit==='function'){
+    const n=vfx>=2?4:2;
+    for(let i=0;i<n;i++){
+      const ox=(Math.random()-0.5)*width*1.5, oz=(Math.random()-0.5)*width*1.5;
+      emit(x+ox,y+0.06,z+oz,(Math.random()-0.5)*0.14,0.10+Math.random()*0.16,(Math.random()-0.5)*0.14,
+        0.055+Math.random()*0.055,1.5+Math.random()*1.5,5,0.4,0.06,1);
+    }
+  }
 }
 function crownSurfSheet(x,y,z,r,power){
   const speed=2+power*0.36, life=Math.min(1.7,2*speed/Math.max(grav,4));
