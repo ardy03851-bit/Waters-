@@ -29,7 +29,7 @@ function fixture(){
     const explore={active:true,mode:'helm',keys:new Set(),touchKeys:new Map(),helmView:'chase'};
     const Hooks={on(){}};let notices=[];
     function toast(s){notices.push(s);} function compass(){return 'N';}
-    function islandGround(x,z){return blocked&&x>=-5&&x<=20&&Math.abs(z)<12?3:-30;}
+    function islandGround(x,z){globalThis.groundChecks=(globalThis.groundChecks||0)+1;return blocked&&x>=-5&&x<=20&&Math.abs(z)<12?3:-30;}
     function waveSample(x,z,t,full,out){out.h=0.12*Math.sin(x*.12+t*.7)+0.05*Math.cos(z*.1+t*.4);}
     function surfH(x,z,t){return 0.12*Math.sin(x*.12+t*.7)+0.05*Math.cos(z*.1+t*.4);}
     function putSurf(array,max,item){array.push(item);if(array.length>max)array.shift();}
@@ -89,6 +89,31 @@ test('rotated ship footprints stop in shallow water and at the sailing boundary'
   assert.equal(stopped,true);assert.equal(api.ship.speed,0);assert.ok(api.ship.x<-14);
   api.block(false);Object.assign(api.ship,{x:179.7,z:0,heading:Math.PI/2,anchored:false,throttle:1,speed:3});
   api.tick(10);assert.ok(Math.hypot(api.ship.x,api.ship.z)<=180);assert.equal(api.ship.speed,0);
+});
+
+test('conservative placement broad phase preserves the exact rotated footprint test',()=>{
+  const {api,ctx}=fixture();api.init();api.block(true);
+  /* The square contains every point where the stub reports shallow ground. */
+  api.islands.land.push({x:7.5,z:0,extent:12.5});
+  const reference=(x,z,heading)=>{
+    const fx=Math.sin(heading),fz=-Math.cos(heading),rx=Math.cos(heading),rz=Math.sin(heading);
+    for(let lx=-12;lx<=12;lx+=2) for(const lz of [-3,-1.5,0,1.5,3]){
+      const px=x+fx*lx+rx*lz,pz=z+fz*lx+rz*lz;
+      if(px>=-5&&px<=20&&Math.abs(pz)<12) return false;
+    }
+    return true;
+  };
+  let seed=123456;
+  const rand=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+  for(let i=0;i<8000;i++){
+    const x=(rand()-.5)*160,z=(rand()-.5)*160,heading=(rand()-.5)*Math.PI*2;
+    assert.equal(api.shipPlacementOK(x,z,heading),reference(x,z,heading),`placement ${x}, ${z}, ${heading}`);
+  }
+  ctx.groundChecks=0;
+  assert.equal(api.shipPlacementOK(150,150,1.1),true);
+  assert.equal(ctx.groundChecks,0,'far-open-water placements do not sample the island heightfield');
+  assert.equal(api.shipPlacementOK(7.5,0,0),false);
+  assert.ok(ctx.groundChecks>0,'near shore still uses the full sampled collision check');
 });
 
 test('the direct pilot reaches open-water waypoints, yields to manual input, and resets on coast changes',()=>{

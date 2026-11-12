@@ -338,6 +338,7 @@ body.paused #slowBadge,body.paused #hint{opacity:0!important}
 
 .p-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .p-btns .btn{animation:none;justify-content:center;min-height:44px}
+.p-btns .btn:disabled{opacity:.7;cursor:wait}
 .ic-set circle{fill:currentColor;stroke:none;transition:transform .5s var(--spring)}
 .btn:hover .ic-set circle:first-of-type{transform:translateX(-6px)}
 .btn:hover .ic-set circle:last-of-type{transform:translateX(6px)}

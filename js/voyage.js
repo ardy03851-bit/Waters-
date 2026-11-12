@@ -8,6 +8,7 @@
    ============================================================ */
 const voyage={waypoint:null,pilot:false,arrived:false,cruise:0.65,track:[],cursor:[0,0],chartOpen:false,zoomed:false,uiClock:0};
 const CHART_EXTENT=190,CHART_LOCAL_EXTENT=90,CHART_WAYPOINT_LIMIT=SHIP_LIMIT-8,MAX_VOYAGE_TRACK=160;
+let chartLandFor=null,chartLandActive=false;
 function voyageBearing(dx,dz){return Math.atan2(dx,-dz);}
 function voyageAngleDelta(target,current){return Math.atan2(Math.sin(target-current),Math.cos(target-current));}
 function headingDegrees(angle){return ((Math.round(angle/DEG)%360)+360)%360;}
@@ -82,12 +83,15 @@ function onVoyageIslandsChanged(){
   /* A regenerated coast can invalidate both a destination and its route. */
   const hadCourse=!!voyage.waypoint,wasPiloting=voyage.pilot;
   if(wasPiloting) setShipAnchor(true);else stopVoyagePilot();
-  voyage.waypoint=null;voyage.arrived=false;
-  buildVoyageLand();
+  voyage.waypoint=null;voyage.arrived=false;chartLandFor=null;
   if(hadCourse&&explore.active&&typeof toast==='function') toast('Coast changed · choose a new waypoint');
-  if(voyage.chartOpen) updateVoyageChart();
+  if(voyage.chartOpen){buildVoyageLand();updateVoyageChart();}
 }
 function buildVoyageLand(){
+  /* Terrain is immutable between coast changes. Reopening the chart should
+     reuse the same detailed sampled paths instead of rebuilding them. */
+  if(chartLandFor===islands.land&&chartLandActive===islands.active) return;
+  chartLandFor=islands.land;chartLandActive=islands.active;
   const group=$('chartLand');group.replaceChildren();
   if(!islands.active) return;
   const ns='http://www.w3.org/2000/svg';
