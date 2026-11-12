@@ -46,6 +46,7 @@ function fixture(){
     ${scenery}
     ${physics}
     globalThis.api={islands,islandConfig,islandProfile,generateIslands,removeIslands,islandGround,collideIsland,updateIslandSurf,rebuildIslandTrees,rebuildIslandDetails,
+      plantKinds:PLANT_KINDS.map(k=>k.name),
       setConditions(s,storm){sea=s;sky.storm=storm;},
       tick(dt){simT+=dt;updateIslandSurf(dt);},
       resetTime(){simT=0;islands.nextCrash=0;for(const p of islands.coast){p.last=0;p.cool=0;}},
@@ -342,4 +343,148 @@ test('mixed-biome assignments vary by seed and extreme procedural profiles stay 
     }
   }
   assert.ok(orders.size>50,`seeded mixed islands should use many biome orders (${orders.size})`);
+});
+
+test('cinematic generation settings add drama, terraces, sea stacks and a wider shelf',()=>{
+  const {api}=fixture(), seed=0x51c0ffee;
+  const flat=api.generateIslands(seed,{count:3,drama:0,terraces:0,shelf:1,stacks:0});
+  const plain=api.islands.land.map(I=>I.h.slice());
+  const plainMax=Math.max(...plain.map(h=>Math.max(...h)));
+  assert.equal(api.islands.details.stacks.count,0,'sea stacks are off when their control is zero');
+
+  api.generateIslands(seed,{count:3,drama:1.5,terraces:1.2,shelf:1.5,stacks:1.5});
+  assert.ok(api.islands.land.length===3);
+  const dramatic=api.islands.land.map(I=>I.h);
+  assert.ok(Math.max(...dramatic.map(h=>Math.max(...h)))>plainMax,'vertical drama raises the skyline');
+  assert.notDeepEqual(dramatic[0],plain[0],'terraces and drama change the sampled surface');
+  assert.ok(api.islands.land.every(I=>I.h.every(h=>Number.isFinite(h)&&h<=28)),'extreme drama stays inside the shoreline range');
+  assert.equal(landComponents(api).length,3,'drama keeps every island separate');
+
+  const stacks=api.islands.details.stacks;
+  assert.ok(stacks.count>2&&stacks.count<200,'sea stacks are bounded and present');
+  const data=stacks.instances.data;
+  for(let i=0;i<data.length;i+=8){
+    const x=data[i],y=data[i+1],z=data[i+2],width=data[i+3],height=width*data[i+5];
+    assert.ok(Number.isFinite(x+y+z+width+height)&&width>0&&height>0,'stack instances are finite');
+    assert.ok(y<0,'each stack rises from submerged ground');
+    assert.ok(y+height*0.72>0,'the stack breaks the surface');
+    assert.ok(Math.abs(y+0.15-api.islandGround(x,z))<0.01,'the stack base sits on the sampled seabed');
+  }
+  /* Shallower shelf: more of the ring around the coast is above -12 m. */
+  let shallow=0,total=0;
+  for(const I of api.islands.land) for(let a=0;a<32;a++){
+    const ang=a*Math.PI*2/32,r=1.12;
+    const lx=Math.cos(ang)*I.rx*r,lz=Math.sin(ang)*I.rz*r;
+    const h=api.islandGround(I.x+I.cs*lx-I.sn*lz,I.z+I.sn*lx+I.cs*lz);
+    total++; if(h>-7) shallow++;
+  }
+  assert.ok(shallow/total>0.5,'a wide shelf keeps the near coast shallow');
+  assert.equal(flat,api.islands.seed,'the returned seed is stable');
+});
+
+test('atoll and fjord biomes build connected, collidable landforms',()=>{
+  const {api}=fixture(), seed=0x2b7c11a3;
+  api.generateIslands(seed,{biome:'atoll',count:3,stacks:0});
+  assert.equal(landComponents(api).length,3,'each atoll ring is one connected shore');
+  for(const I of api.islands.land){
+    assert.ok(api.islandGround(I.x,I.z)<0.5,'the atoll centre is a real lagoon');
+    let crest=-99;
+    for(let a=0;a<32;a++){
+      const ang=a*Math.PI*2/32,u=Math.cos(ang)*0.70,v=Math.sin(ang)*0.70;
+      const x=I.x+I.cs*u*I.rx-I.sn*v*I.rz,z=I.z+I.sn*u*I.rx+I.cs*v*I.rz;
+      crest=Math.max(crest,api.islandGround(x,z));
+    }
+    assert.ok(crest>1.2,'the motu ring rises above the sea');
+  }
+  const atollTrees=api.islands.treeCount;
+
+  api.generateIslands(seed,{biome:'fjord',count:3,stacks:0});
+  assert.equal(landComponents(api).length,3,'the drowned channel does not split an island');
+  for(const I of api.islands.land){
+    assert.ok(api.islandGround(I.x,I.z)>1.5,'the massif summit stays dry');
+    let drowned=99;
+    for(let u=-0.9;u<=-0.15;u+=0.05){
+      const v=-0.10+0.09*Math.sin(u*3.1+I.phase*2.0);
+      const x=I.x+I.cs*u*I.rx-I.sn*v*I.rz,z=I.z+I.sn*u*I.rx+I.cs*v*I.rz;
+      drowned=Math.min(drowned,api.islandGround(x,z));
+    }
+    assert.ok(drowned<0,'water reaches inland along the fjord');
+    const b={x:I.x,y:api.islandGround(I.x,I.z)+0.2,z:I.z,vx:0,vy:-4,vz:0,wx:0,wy:0,wz:0,r:0.5,e:0.5,type:0};
+    api.collideIsland(b,1/240);
+    assert.ok(b.y>api.islandGround(I.x,I.z)&&Number.isFinite(b.y+b.vy),'fjord terrain remains collidable');
+  }
+  assert.ok(atollTrees===0,'atolls do not plant pines');
+});
+
+test('layouts, spread and the new plant cutouts stay seeded, bounded and rooted',()=>{
+  const {api}=fixture(), seed=0x6a09e667;
+  api.generateIslands(seed,{layout:'lagoon',count:5,stacks:0});
+  assert.equal(landComponents(api).length,5,'a lagoon layout keeps five separate islands');
+  const ring=api.islands.land.map(I=>Math.hypot(I.x,I.z+12));
+  assert.ok(ring.every(r=>r>18),'lagoon islands sit on a ring around open water');
+
+  api.generateIslands(seed,{layout:'chain',count:5,stacks:0});
+  assert.equal(landComponents(api).length,5,'the barrier chain keeps every island separate');
+  for(let i=0;i<api.islands.land.length;i++) for(let j=0;j<i;j++){
+    const a=api.islands.land[i],b=api.islands.land[j];
+    const min=1.36*(Math.max(a.rx,a.rz)+Math.max(b.rx,b.rz))+1.5;
+    assert.ok(Math.hypot(a.x-b.x,a.z-b.z)>=min-1e-6,'the chain keeps navigable water between islands');
+  }
+
+  const options=api.islandConfig({biome:'temperate',count:3,trees:1.2,grass:1.1,stacks:0});
+  api.generateIslands(seed,options);
+  const plants=api.islands.scenery.plants;
+  assert.ok(plants.count>20,'the generated cutout species are planted');
+  const data=plants.instances.data;
+  for(let i=0;i<data.length;i+=8){
+    const x=data[i],y=data[i+1],z=data[i+2],height=data[i+3],id=data[i+4];
+    assert.ok(Number.isFinite(x+y+z+height+id)&&height>0.4&&height<11,'plant instances are finite and bounded');
+    assert.ok(Math.abs(y+0.05-api.islandGround(x,z))<0.002,'every cutout is rooted in the collision heightfield');
+    const kind=Math.round(id)%16;
+    assert.ok(kind>=0&&kind<api.plantKinds.length,'the species index is inside the cutout atlas');
+  }
+  const snapshot=data.slice();
+  api.generateIslands(seed,options);
+  assert.deepEqual(api.islands.scenery.plants.instances.data,snapshot,'plant placement is seeded');
+  api.generateIslands(seed,api.islandConfig({biome:'temperate',count:3,trees:0,grass:0,stacks:0}));
+  assert.equal(api.islands.scenery.plants.count,0,'zeroed tree and grass sliders remove every cutout');
+
+  /* Surf sources now cover beaches as well as cliffs, and each has a real
+     seaward normal instead of an ellipse approximation. */
+  api.generateIslands(seed,{count:3});
+  const coast=api.islands.coast;
+  assert.ok(coast.length>80&&coast.some(p=>p.steep)&&coast.some(p=>!p.steep),'beaches and cliffs are both sampled');
+  for(const p of coast){
+    assert.ok(Number.isFinite(p.nx+p.nz)&&p.nx*p.nx+p.nz*p.nz>0.9,'coast normals are unit length');
+  }
+  const invalid=api.islandConfig({layout:'bogus',drama:-2,terraces:9,shelf:NaN,stacks:8,mist:-1,spread:0});
+  assert.equal(invalid.layout,'scattered');assert.equal(invalid.drama,0);assert.equal(invalid.terraces,1.5);
+  assert.equal(invalid.shelf,1);assert.equal(invalid.stacks,1.5);assert.equal(invalid.mist,0);assert.equal(invalid.spread,0.75);
+});
+
+test('sea stacks are surf sources and rebuilds swap them without leaking entries',()=>{
+  const {api}=fixture(), seed=0xbb67ae85;
+  api.generateIslands(seed,{label:'stack coast',count:3,stacks:1.2});
+  const stacks=api.islands.details.stacks;
+  assert.ok(stacks.count>0,'the stack slider generates offshore rocks');
+  const stackCoast=()=>api.islands.coast.filter(p=>p.stack);
+  assert.equal(stackCoast().length,stacks.count,'every stack feeds the surf system');
+  for(const p of stackCoast()){
+    assert.ok(api.islandGround(p.x,p.z)<0.5,'a stack surf source sits in water, not on the beach');
+  }
+  const before=api.islands.coast.length;
+  api.rebuildIslandDetails(api.islandConfig({label:'stack coast',count:3,stacks:0.4}));
+  assert.equal(stackCoast().length,api.islands.details.stacks.count,'a detail rebuild refreshes stack surf sources');
+  assert.notEqual(api.islands.coast.length,before,'the stack count is reflected in the coast list');
+  assert.equal(new Set(stackCoast().map(p=>p.x+':'+p.z)).size,stackCoast().length,'no duplicate stack entries');
+});
+
+test('the barrier chain stays inside the shoreline map for any spread',()=>{
+  const {api}=fixture();
+  for(const spread of [0.85,1.15,1.5]){
+    api.generateIslands(0x3c6ef372,{layout:'chain',count:5,spread,stacks:0});
+    for(const I of api.islands.land){
+      assert.ok(Math.hypot(I.x,I.z)+I.extent<78,'chain island '+I.x.toFixed(1)+','+I.z.toFixed(1)+' fits the 80 m shoreline map');
+    }
+  }
 });

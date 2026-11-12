@@ -58,6 +58,14 @@ window.Aqua={
     userSet('islandBiome',id);
     return id;
   },
+  /* land generation presets: Aqua.coast('cinematic') · Aqua.coast() lists them */
+  coast(name){
+    if(name===undefined) return Object.keys(ISLAND_PRESETS);
+    islandPreset(name);
+    return name;
+  },
+  /* read-only view of the plant cutout atlas, handy from the console */
+  get plants(){ return {kinds:PLANT_KINDS.map(k=>k.name),loaded:plantAtlas.loaded,layers:plantAtlas.layers,size:plantAtlas.size}; },
   /* post effects: Aqua.post('bloom',false) */
   post(name,on){
     if(name==='bloom') userSet('bloom',on===undefined?!S.bloom:!!on);

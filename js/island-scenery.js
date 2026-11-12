@@ -125,6 +125,7 @@ function sceneryGeometry(){
   /* The palm draw uses gl_VertexID; provide a small valid vertex buffer even
      on drivers that validate enabled but inactive attributes in the VAO. */
   return {palm:{vertices:new Float32Array(18*8),indices:new Uint16Array(0)},
+    plant:{vertices:new Float32Array(18*8),indices:new Uint16Array(0)},
     cactus:result(cactus),flower:result(blossoms),spire:result(spire),
     fern:result(fern),reeds:result(reeds),mushroom:result(mushroom),cushion:result(cushion)};
 }
@@ -206,14 +207,74 @@ function makeIslandCascades(random,options){
   return {vao,vb,ib,count:indices.length,paths};
 }
 
+/* ---- billboard plants -----------------------------------------------------
+   Photographic cutouts from assets/plants, packed into one texture array.
+   One instanced draw covers every species; aspect ratios come from the
+   generated manifest so a broad agave and a slender cypress both keep their
+   intended height. Species are decorative, like the rest of the scenery. */
+const PLANT_KINDS=[
+  {name:'broadleaf',  file:'plants/broadleaf-tree.png',  aspect:0.5815,min:3.0,max:6.6,flex:0.60,tree:true},
+  {name:'cypress',    file:'plants/cypress-tree.png',    aspect:0.1751,min:4.4,max:8.6,flex:0.42,tree:true},
+  {name:'eucalyptus', file:'plants/eucalyptus-tree.png', aspect:0.6097,min:3.8,max:7.4,flex:0.70,tree:true},
+  {name:'fan-palm',   file:'plants/fan-palm.png',        aspect:0.5976,min:3.2,max:6.8,flex:0.85,tree:true},
+  {name:'banana',     file:'plants/banana-plant.png',    aspect:0.6901,min:1.5,max:3.2,flex:0.95},
+  {name:'tree-fern',  file:'plants/tree-fern.png',       aspect:1.3654,min:1.0,max:2.4,flex:0.80},
+  {name:'bamboo',     file:'plants/bamboo-cluster.png',  aspect:0.4789,min:2.0,max:4.6,flex:1.00},
+  {name:'agave',      file:'plants/agave.png',           aspect:1.2842,min:0.6,max:1.5,flex:0.18},
+  {name:'saltbush',   file:'plants/saltbush.png',        aspect:1.5879,min:0.5,max:1.2,flex:0.35},
+  {name:'dune-grass', file:'plants/dune-grass.png',      aspect:1.3729,min:0.6,max:1.3,flex:0.55},
+  {name:'mangrove',   file:'plants/mangrove.png',        aspect:0.6761,min:2.4,max:5.4,flex:0.50,tree:true,shore:true},
+  {name:'juniper',    file:'plants/juniper.png',         aspect:2.0970,min:0.6,max:1.5,flex:0.22},
+  {name:'dead-snag',  file:'plants/dead-snag.png',       aspect:0.3481,min:2.6,max:6.2,flex:0.28,tree:true}
+];
+/* Which species each ecology plants, and how densely. Tree species draw on
+   the tree sliders; low plants on the grass and wildflower sliders. */
+const PLANT_RECIPES={
+  temperate:{broadleaf:0.55,eucalyptus:0.16,juniper:0.12,'dune-grass':0.30,saltbush:0.30,'tree-fern':0.10},
+  tropical:{'fan-palm':0.46,mangrove:0.20,banana:0.34,'tree-fern':0.30,bamboo:0.20,saltbush:0.16},
+  volcanic:{'dead-snag':0.22,saltbush:0.18,'dune-grass':0.10},
+  alpine:{cypress:0.34,juniper:0.34,broadleaf:0.20,'tree-fern':0.14,saltbush:0.16},
+  desert:{agave:0.52,'dead-snag':0.08,saltbush:0.22},
+  moss:{'tree-fern':0.56,bamboo:0.34,eucalyptus:0.14,juniper:0.16},
+  atoll:{'fan-palm':0.72,mangrove:0.34,banana:0.24,'dune-grass':0.62,saltbush:0.34},
+  fjord:{cypress:0.42,broadleaf:0.36,juniper:0.22,eucalyptus:0.14,'tree-fern':0.20,saltbush:0.14}
+};
+function plantKindIndex(name){
+  for(let i=0;i<PLANT_KINDS.length;i++) if(PLANT_KINDS[i].name===name) return i;
+  return -1;
+}
+function plantRandomFor(name){
+  let h=0x811c9dc5;
+  for(let i=0;i<name.length;i++) h=Math.imul(h^name.charCodeAt(i),0x01000193)>>>0;
+  return islandRandom((islands.seed^h)>>>0);
+}
+
 function makeIslandScenery(options){
   const palmRandom=islandRandom(islands.seed^0x4f9bd231), cactusRandom=islandRandom(islands.seed^0x6c8f1173);
   const flowerRandom=islandRandom(islands.seed^0x7128bc25), spireRandom=islandRandom(islands.seed^0x9a127d5b);
   const fernRandom=islandRandom(islands.seed^0x21c4e7a9), reedRandom=islandRandom(islands.seed^0x5be10d37);
   const mushroomRandom=islandRandom(islands.seed^0x83f61cc5), cushionRandom=islandRandom(islands.seed^0xa7d3092b);
-  const palms=[],cacti=[],flowers=[],spires=[],ferns=[],reeds=[],mushrooms=[],cushions=[],normal={nx:0,ny:1,nz:0};
+  const palms=[],cacti=[],flowers=[],spires=[],ferns=[],reeds=[],mushrooms=[],cushions=[],plants=[],normal={nx:0,ny:1,nz:0};
+  function placePlants(I,random,target,minY,minNormal,kindIndex,kind,size,accept,spacing){
+    if(target<=0) return;
+    const occupied=[]; let added=0;
+    for(let tries=0;tries<target*16&&added<target;tries++){
+      const p=islandDetailPoint(I,random); if(!p) continue;
+      const y=islandGround(p[0],p[1],normal);
+      if(y<minY||normal.ny<minNormal||(accept&&!accept(p,y))) continue;
+      let crowded=false;
+      for(const q of occupied) if((q[0]-p[0])**2+(q[1]-p[1])**2<spacing*spacing){crowded=true;break;}
+      if(crowded) continue;
+      occupied.push(p);
+      const h=size(random);
+      /* Instance: base position, height, packed kind + biome, seed and tint. */
+      plants.push(p[0],y-0.05,p[1],h,kindIndex+I.biomeId*16,random(),random(),kind.flex);
+      added++;
+    }
+  }
   for(const I of islands.land){
     const biome=ISLAND_BIOMES[I.biome].id, eco=ISLAND_BIOMES[I.biome];
+    I.biomeId=biome;
     function place(random,target,minY,minNormal,data,height,accept,spacing){
       const occupied=[]; let added=0;
       if(target<=0) return;
@@ -253,12 +314,34 @@ function makeIslandScenery(options){
     /* Moss cushions round off every ledge they can reach. */
     place(cushionRandom,Math.round(I.rx*I.rz*1.10*options.grass*(eco.cushions||0)),0.9,0.66,cushions,
       r=>0.85+1.25*r(),null,0.30);
+    /* The generated cutouts: taller species claim the canopy and slope
+       positions, low ones hug the beach and the rocky ground. Each species
+       draws from its own seeded stream so changing one density never shuffles
+       the others. */
+    const recipe=PLANT_RECIPES[I.biome]||PLANT_RECIPES.temperate;
+    for(const name in recipe){
+      const kindIndex=plantKindIndex(name); if(kindIndex<0) continue;
+      const kind=PLANT_KINDS[kindIndex], weight=recipe[name];
+      const base=kind.tree?options.trees:options.grass;
+      /* Small islets pack their foliage tighter so a chain still reads as
+         wooded rather than as bare rock. */
+      const density=Math.min(1.35,Math.max(1,11/Math.max(4,Math.sqrt(I.rx*I.rz))));
+      const target=Math.round(I.rx*I.rz*0.20*base*weight*density);
+      const spacing=kind.tree?1.5:0.55;
+      /* Shore species (mangrove) root just above the tide line; the rest of
+         the trees need dry ground. */
+      const minY=kind.shore?0.35:(kind.tree?1.5:0.45);
+      const minNormal=kind.shore?0.70:(kind.tree?0.66:0.72);
+      placePlants(I,plantRandomFor(name),target,minY,minNormal,
+        kindIndex,kind,r=>kind.min+(kind.max-kind.min)*Math.pow(r(),0.85)*(kind.tree?options.treeScale:1));
+    }
   }
   const geom=sceneryGeometry();
   islands.scenery={palms:sceneryInstances(palms,geom.palm),cacti:sceneryInstances(cacti,geom.cactus),
     flowers:sceneryInstances(flowers,geom.flower),spires:sceneryInstances(spires,geom.spire),
     ferns:sceneryInstances(ferns,geom.fern),reeds:sceneryInstances(reeds,geom.reeds),
     mushrooms:sceneryInstances(mushrooms,geom.mushroom),cushions:sceneryInstances(cushions,geom.cushion),
+    plants:sceneryInstances(plants,geom.plant),
     cascades:makeIslandCascades(islandRandom(islands.seed^0x6419bcf3),options)};
 }
 function disposeIslandScenery(){
@@ -273,6 +356,59 @@ function rebuildIslandScenery(options){
   if(!islands.active) return;
   disposeIslandScenery();makeIslandScenery(options);
 }
+
+/* The plant cutouts are bottom-anchored billboards: world height is the
+   instance height, width follows the species aspect from plants.json, and the
+   base never leaves the sampled soil while the crown bends in the wind. */
+const PLANT_VS=HDR+`
+layout(location=3) in vec4 aPlant; layout(location=4) in vec4 aInfo;
+uniform mat4 uVP; uniform vec3 uCamEff; uniform float uMirror,uTime,uWindStrength;
+uniform vec2 uWindDir; uniform float uPlantAspect[16];
+out vec2 vUV; out vec3 vWorld; out float vTint; flat out float vKind; flat out float vBiome;
+void main(){
+  /* Packed id: biome * 16 + species index, so one float carries both. */
+  float id=floor(aInfo.x+0.5);
+  int kind=int(mod(id,16.0));
+  vBiome=mod(floor(id/16.0),16.0);
+  float aspect=uPlantAspect[kind];
+  vec2 c=vec2(float(gl_VertexID&1),float(gl_VertexID>>1));
+  vec2 view=uCamEff.xz-aPlant.xz; view/=max(length(view),0.001);
+  vec3 right=vec3(view.y,0.0,-view.x);
+  vec2 side=vec2(-uWindDir.y,uWindDir.x);
+  float gust=0.72+0.28*sin(uTime*0.75-dot(aPlant.xz,uWindDir)*0.14+aInfo.y*9.0);
+  float flutter=sin(uTime*(1.6+aInfo.y*1.3)+aInfo.y*23.0+c.y*4.0);
+  vec2 bend=(uWindDir*(0.020+0.075*gust)+side*flutter*0.012)
+            *aInfo.w*clamp(uWindStrength,0.0,1.5)*pow(c.y,1.6)*aPlant.w;
+  vec3 p=aPlant.xyz+right*((c.x-0.5)*aPlant.w*aspect)+vec3(bend.x,c.y*aPlant.w,bend.y);
+  vWorld=p; vUV=vec2(c.x,c.y); vTint=aInfo.z; vKind=float(kind);
+  if(uMirror>0.5)p.y=-p.y;
+  gl_Position=uVP*vec4(p,1.0);
+}`;
+const PLANT_FS=HDR+COMMON+`
+in vec2 vUV; in vec3 vWorld; in float vTint; flat in float vKind; flat in float vBiome; out vec4 o;
+uniform sampler2DArray uPlants; uniform vec3 uCamEff;
+uniform float uMode,uMirror,uSnowCover,uMist;
+void main(){
+  if(uMirror>0.5&&vWorld.y<0.0) discard;
+  /* Uploads keep the image's natural orientation; V is flipped here so
+     vUV.y=0 is always the rooted base of the plant. */
+  vec4 tex=texture(uPlants,vec3(vUV.x,1.0-vUV.y,vKind));
+  if(tex.a<0.20) discard;
+  vec3 V=normalize(uCamEff-vWorld);
+  vec3 N=normalize(vec3(V.x*0.45,0.92,V.z*0.45));
+  vec3 alb=pow(tex.rgb,vec3(1.5))*(0.80+0.34*vTint)*(1.0-0.16*uRain);
+  float snowCap=(vBiome>2.5&&vBiome<3.5)?0.90:(vBiome>6.5?0.72:0.0);
+  float snow=uSnowCover*snowCap*smoothstep(0.30,0.85,vUV.y)*(0.40+0.60*tex.g);
+  float winter=(vBiome>4.5&&vBiome<5.5)?0.35:0.0;
+  alb=mix(alb,vec3(0.62,0.68,0.70),snow*0.55);
+  alb=mix(alb,vec3(0.70,0.63,0.50),winter*smoothstep(0.35,0.9,vUV.y)*0.5);
+  float nl=max(dot(N,uLight),0.0);
+  vec3 col=alb*(uZenith*0.34+uHorizon*0.22+vec3(0.26*uAmbLum)+uSunCol*(0.16+0.34*nl));
+  float dist=length(uCamEff-vWorld);
+  col=mix(col,uFogCol,1.0-exp(-dist*uFogD));
+  col=mix(col,uFogCol*1.02,clamp(uMist*(1.0-exp(-dist*0.004))*exp(-max(vWorld.y,0.0)*0.10),0.0,0.72));
+  if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
+}`;
 
 /* Like the original photographic pines, palms are depth-writing cutouts. A
    subdivided card keeps the trunk rooted while the crown responds to gusts. */
@@ -424,7 +560,10 @@ void main(){
   if(uMode>0.5) o=vec4(enc(col),alpha);else o=vec4(tonemap(col),alpha);
 }`;
 const pScenery=program(SCENERY_VS,SCENERY_FS,'island scenery'),pCascade=program(CASCADE_VS,CASCADE_FS,'island cascade'),
-  pPalm=program(PALM_VS,PALM_FS,'island palm');
+  pPalm=program(PALM_VS,PALM_FS,'island palm'),pPlant=program(PLANT_VS,PLANT_FS,'island plants');
+/* A fixed 16-slot aspect table keeps the shader's uniform array sizes static. */
+const plantAspect=new Float32Array(16);
+PLANT_KINDS.forEach((kind,i)=>{ if(i<16) plantAspect[i]=kind.aspect; });
 
 function drawIslandScenery(mode,mirror,ce){
   const d=islands.scenery;if(!d)return;
@@ -438,6 +577,19 @@ function drawIslandScenery(mode,mirror,ce){
     bindIslandTexture(10,islandTextures.palm,pPalm,'uPalm');
     bindIslandTexture(14,islandTextures.palm2||islandTextures.palm,pPalm,'uPalm2');
     gl.bindVertexArray(d.palms.vao);gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,18,d.palms.count);
+  }
+  if(d.plants&&d.plants.count&&islandTextures.plants&&islandTextures.plants.tex){
+    gl.useProgram(pPlant);setSky(pPlant);
+    gl.uniformMatrix4fv(L(pPlant,'uVP'),false,VP);gl.uniform3fv(L(pPlant,'uCamEff'),ce);
+    gl.uniform1f(L(pPlant,'uMode'),mode);gl.uniform1f(L(pPlant,'uMirror'),mirror);
+    gl.uniform1f(L(pPlant,'uSnowCover'),env.season===3?1:0);
+    gl.uniform1f(L(pPlant,'uMist'),islands.options.mist);
+    gl.uniform1f(L(pPlant,'uWindStrength'),clamp(envS.wind/28,0,1)*islands.options.wind);
+    gl.uniform2f(L(pPlant,'uWindDir'),Math.sin(windAng),Math.cos(windAng));
+    gl.uniform1fv(L(pPlant,'uPlantAspect'),plantAspect);
+    gl.activeTexture(gl.TEXTURE13);gl.bindTexture(gl.TEXTURE_2D_ARRAY,islandTextures.plants.tex);
+    gl.uniform1i(L(pPlant,'uPlants'),13);
+    gl.bindVertexArray(d.plants.vao);gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,d.plants.count);
   }
   gl.useProgram(pScenery);setSky(pScenery);
   gl.uniformMatrix4fv(L(pScenery,'uVP'),false,VP);gl.uniform3fv(L(pScenery,'uCamEff'),ce);

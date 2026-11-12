@@ -8,6 +8,21 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000` in a WebGL 2 capable browser.
 
+### Development server
+
+The same command is the development server; there is nothing to compile or
+watch. Bind it to all interfaces when the page is opened from another device,
+a container or a preview proxy:
+
+```sh
+python3 -m http.server 8000 --bind 0.0.0.0
+```
+
+Then open `http://localhost:8000/`. Edit any file under `js/`, `css/` or
+`assets/` and reload the page to see the change. Press **G** for settings, then
+open the **Islands** tab and use **Cinematic coast** to see the new land
+generation, or choose the **Coral atoll** scene from the Scene tab.
+
 ## Balls and capture
 
 Use **Drop ball** or tap the sea, or choose **Ball rain** for a short burst of different balls. **Clear** removes the balls and splash effects and cancels any balls still queued by rain; existing surface ripples fade naturally. A new rain can be started immediately afterwards.
@@ -74,16 +89,30 @@ Select **Islands** in the dock (or press **I**) to generate an archipelago; sele
 
 **Settings → Islands** has controls for:
 
-- **Temperate**, **Tropical**, **Volcanic**, **Alpine**, **Desert**, **Mossland** or **Mixed** biomes. Tropical coasts grow palms; volcanic islands have dark basalt and crater-like high ground; alpine slopes hold snow; desert islands have sandstone mesas and cacti; **Mossland** is the most detailed landform, with domain-warped karst ridges, fluted towers, stacked terraces, sinkholes with raised rims and hanging vegetation. Mixed mode assigns different biomes to each island from the seed and always includes one volcanic island.
+- **Temperate**, **Tropical**, **Volcanic**, **Alpine**, **Desert**, **Mossland**, **Atoll**, **Fjord** or **Mixed** biomes. Tropical coasts grow palms; volcanic islands have dark basalt and crater-like high ground; alpine slopes hold snow; desert islands have sandstone mesas and cacti; **Mossland** is the most detailed landform, with domain-warped karst ridges, fluted towers, stacked terraces, sinkholes with raised rims and hanging vegetation. **Atoll** builds a continuous ring of coral motu around a real, shallow lagoon; **Fjord** cuts a drowned channel into a steep, snow-shouldered massif without ever splitting the island. Mixed mode assigns five different biomes to the archipelago from the seed and always includes one volcanic island.
 - Wild, Coves or Highlands coast types, three to five islands, mountain height, coastline detail, beaches and landform detail.
+- Three new layouts: **Scattered** (the original), **Lagoon** (islands in a ring around a sheltered bay) and **Chain** (smaller barrier islands along one bearing), with an **Archipelago spread** control.
+- **Cinematic generation**: **Vertical drama** sharpens ridges and lifts the skyline, **Rock terraces** steps the settled surface, **Reef shelf and shallows** widens the turquoise shoal, **Sea stacks** raises offshore pinnacles, and **Coastal mist** adds aerial depth. The **Natural**, **Cinematic**, **Storybook** and **Epic** coast buttons set these together and every slider can then be tuned on its own.
 - Tree and cactus density, tree height, grasses, boulders, wildflowers, rock formations, cascades, ferns, reeds, mushrooms, moss cushions and seabirds. Cascades appear on suitable downhill slopes in the wetter biomes.
 - Vegetation wind response and cliff-surf intensity.
 
-New installs start with Mixed biomes; settings saved before biomes were added retain their temperate ecology. **New islands** chooses a new seed; **Storm coast** brings in a thunderstorm. The seed and island settings are saved with the other settings, so the same seed and controls recreate the same layout and planting. Terrain controls rebuild the current coast, while vegetation and scenery controls update only those detail layers. Pines, palms and grass bend in wind-driven gusts, rain darkens foliage, winter adds snow, and seabirds shelter during heavy storms and at night.
+New installs start with Mixed biomes; settings saved before biomes were added retain their temperate ecology. **New islands** chooses a new seed; **Storm coast** brings in a thunderstorm. The seed and island settings are saved with the other settings, so the same seed and controls recreate the same layout and planting. Terrain and cinematic controls rebuild the current coast, while vegetation and scenery controls update only those detail layers. Pines, palms, plants and grass bend in wind-driven gusts, rain darkens foliage, winter adds snow, and seabirds shelter during heavy storms and at night.
 
-Storm swells hitting exposed cliffs throw up curling water sheets, fine spray, mist and a fading foam wash. Wind can also tear streaks of spindrift off open-water crests. Water entries include a crown, a jet and, for angled impacts, a directional fan of water. Enable **Sound** in System settings to hear the impacts.
+### Water reaching land
 
-Cacti, ferns, reeds, moss carpets and cushions use AI-generated skin and foliage textures from [`assets/plants/`](assets/plants/README.md), sampled tri-planar so a plant keeps its detail from any angle. The coastal surface and tree textures in `assets/` are local too; no external texture service is required at runtime. Extra palm, basalt and sandstone textures load only when their biomes are used, and low-memory mode limits their upload size while touch devices use smaller maps. Trees, rocks, grasses, flowers, ferns, reeds, mushrooms, cushions, formations and birds use seeded instancing to keep their populations bounded.
+The shoreline is now a four-channel field shared by the terrain and the ocean:
+height, distance to dry land, and a baked **seaward normal**. The water shader
+compares the swell with that normal, so breakers form bands that run shoreward,
+bend into coves and wrap around headlands instead of pulsing as a ring around
+each island. Flat beaches receive a broad **swash** and a bright waterline lace,
+while exposed cliffs throw curling plume sheets, fine spray and a fading foam
+wash. The terrain shader draws its own animated foam at the waterline, so the
+sea visibly runs up the sand and rock. Sea stacks raise their own surf sources,
+so waves break around them too. Storm swells and wind-spindrift still use the
+same bounded effect budgets, and the surf slider still silences all of it at
+zero.
+
+Cacti, ferns, reeds, moss carpets and cushions use AI-generated skin and foliage textures from [`assets/plants/`](assets/plants/README.md), sampled tri-planar so a plant keeps its detail from any angle. Thirteen new AI-generated, keyed **billboard cutouts** — broadleaf, cypress, eucalyptus, fan palm, banana, tree fern, bamboo, agave, saltbush, dune grass, mangrove, juniper and a dead snag — are packed into one texture array and drawn as a single instanced call, rooted on the sampled terrain. The coastal surface and tree textures in `assets/` are local too; no external texture service is required at runtime. Extra palm, basalt and sandstone textures load only when their biomes are used, and low-memory mode limits their upload size while touch devices use smaller maps. Trees, plants, rocks, grasses, flowers, ferns, reeds, mushrooms, cushions, formations, stacks and birds use seeded instancing to keep their populations bounded. The generation pipeline, shoreline channels and asset tooling are documented in [`docs/land-generation.md`](docs/land-generation.md).
 
 ## Rendering controls
 
@@ -99,7 +128,7 @@ If the browser loses its WebGL context, rendering pauses and Aqua attempts one a
 
 ## Tests
 
-Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship and ball collisions, sail transparency, quake/wave synchronization, ripple uploads, bounded effects, and a whole-engine smoke test that boots every module against a stub WebGL 2 context, builds a Mossland island, cycles the ship catalogue and checks points of sail and heel:
+Run the Node.js tests for graphics startup and recovery, seeded terrain, the new cinematic generation settings, atoll and fjord landforms, sea stacks, shoreline normals and billboard planting, sailing and waypoint physics, ship and ball collisions, sail transparency, quake/wave synchronization, ripple uploads, bounded effects, and a whole-engine smoke test that boots every module against a stub WebGL 2 context, builds a Mossland island, checks the plant atlas, cycles the ship catalogue and checks points of sail and heel:
 
 ```sh
 node --test tests/*.test.js

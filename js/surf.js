@@ -146,10 +146,14 @@ layout(location=1) in vec4 aBase;
 layout(location=2) in vec4 aDir;
 layout(location=3) in vec4 aLife;
 uniform mat4 uVP; uniform float uTime; uniform vec4 uW[8]; uniform float uQ[8],uPhase[8];
+uniform sampler2D uIslandMap; uniform float uIslands;
 out vec2 vUV; out vec3 vWorld; out float vAge; out float vSeed;
 void main(){
   vec2 n=aDir.xy, tangent=vec2(-n.y,n.x);
-  vec2 p0=aBase.xz+tangent*((aUV.x*2.0-1.0)*aBase.w*0.78)+n*(0.25+aUV.y*(2.2+1.5*aDir.z));
+  /* aLife.w picks the direction: cliff foam runs seaward, beach wash runs
+     landward so the sheet visibly climbs the sand after each breaker. */
+  vec2 dir=mix(n,-n,clamp(aLife.w,0.0,1.0));
+  vec2 p0=aBase.xz+tangent*((aUV.x*2.0-1.0)*aBase.w*0.78)+dir*(0.25+aUV.y*(2.2+1.5*aDir.z));
   float sp=0.0417*(max(abs(p0.x),abs(p0.y))+1.5);
   vec3 disp=vec3(0.0);
   for(int i=0;i<8;i++){
@@ -159,6 +163,16 @@ void main(){
   }
   vec3 p=vec3(p0.x+disp.x,disp.y+0.075,p0.y+disp.z);
   if(uSeaQuake.w>0.0001) p.y+=seaQuakeWave(p.xz);
+  /* On a beach the wash must follow the sand instead of hovering at sea
+     level: sample the same shoreline height field the ocean uses and never
+     sink below it. Offshore the floor is far below, so this does nothing. */
+  if(uIslands>0.5){
+    vec2 imuv=p.xz/160.0+0.5;
+    if(all(greaterThan(imuv,vec2(0.0)))&&all(lessThan(imuv,vec2(1.0)))){
+      float floorY=texture(uIslandMap,imuv).r*40.0-12.0;
+      p.y=max(p.y,floorY+0.045);
+    }
+  }
   vUV=aUV; vWorld=p; vAge=clamp(aLife.x/aLife.y,0.0,1.0); vSeed=aLife.z;
   gl_Position=uVP*vec4(p,1.0);
 }`;
@@ -230,6 +244,16 @@ function cliffSurfSheets(x,y,z,nx,nz,power){
     {x,y,z,width:width*(layer?0.82:1),nx,nz,power,kind:layer?4:0,age:0,life,seed:seed+layer*0.17,layer});
   putSurf(coastFoam,MAX_COAST_FOAM,{x,y,z,width,nx,nz,power,kind:0,age:0,life:4.0+power,seed,layer:0});
 }
+/* Running shore wash: a wide, low sheet of white water that reaches inland
+   from the waterline. The ocean shader draws the fine lace; this layer gives
+   it a moving mass and a lingering foam trail on the sand. */
+function spawnShoreWash(x,z,nx,nz,power,steep){
+  if(!(power>0.02)) return;
+  const y=surfH(x,z,simT);
+  const width=(steep?1.8:2.6)+2.9*power;
+  putSurf(coastFoam,MAX_COAST_FOAM,{x,y,z,width,nx,nz,power:clamp(power,0.15,1.2),kind:0,
+    age:0,life:2.8+2.6*power,seed:Math.random(),layer:1});
+}
 function crownSurfSheet(x,y,z,r,power){
   const speed=2+power*0.36, life=Math.min(1.7,2*speed/Math.max(grav,4));
   putSurf(surfSheets,MAX_SURF_SHEETS,{x,y,z,width:r,nx:0,nz:0,power,kind:1,age:0,life,seed:Math.random(),layer:0});
@@ -291,6 +315,9 @@ function drawSurfFoam(){
   gl.uniformMatrix4fv(L(pCoastFoam,'uVP'),false,VP); gl.uniform3fv(L(pCoastFoam,'uCam'),eye);
   gl.uniform4fv(L(pCoastFoam,'uW'),uWArr); gl.uniform1fv(L(pCoastFoam,'uQ'),uQArr);
   gl.uniform1fv(L(pCoastFoam,'uPhase'),uPhaseArr);
+  gl.uniform1f(L(pCoastFoam,'uIslands'),islands.active?1:0);
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D,texIslandMap);
+  gl.uniform1i(L(pCoastFoam,'uIslandMap'),5); gl.activeTexture(gl.TEXTURE0);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
   gl.bindVertexArray(foamMesh.vao); gl.drawElementsInstanced(gl.TRIANGLES,foamMesh.count,gl.UNSIGNED_SHORT,0,coastFoam.length);
   gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);

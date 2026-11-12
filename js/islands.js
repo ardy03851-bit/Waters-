@@ -23,10 +23,31 @@ const ISLAND_BIOMES={
   /* Mossland: wet, terraced karst with hanging ferns, reed hollows, moss
      cushions and luminous mushrooms. Its dense heightfield resolves shelves
      and towers that the other biomes do not have. */
-  moss:     {id:5,pines:0.42,grass:1.50,rocks:1.12,ferns:1.70,reeds:0.85,mushrooms:1.25,cushions:1.90}
+  moss:     {id:5,pines:0.42,grass:1.50,rocks:1.12,ferns:1.70,reeds:0.85,mushrooms:1.25,cushions:1.90},
+  /* Atoll: a continuous ring of low coral motu around a pale lagoon. The
+     heightfield stays single-valued, so the lagoon is real shoaling water
+     rather than a painted colour and the ring remains one walkable shore. */
+  atoll:    {id:6,pines:0.00,grass:0.40,rocks:0.34,ferns:0.35,reeds:0.30,mushrooms:0.00,cushions:0.14},
+  /* Fjord: one drowned channel cutting into a steep massif, with hanging
+     shoulders, wet black rock, moss ledges and snow-bright summits. */
+  fjord:    {id:7,pines:0.86,grass:0.90,rocks:1.32,ferns:0.80,reeds:0.18,mushrooms:0.34,cushions:0.80}
 };
 const ISLAND_BIOME_KEYS=Object.keys(ISLAND_BIOMES);
+/* Layouts only move the same seeded islands; they never change the safe
+   channel guarantees, so collision, surf and the chart keep working. */
+const ISLAND_LAYOUTS={
+  scattered:{label:'Scattered'},
+  lagoon:{label:'Lagoon'},
+  chain:{label:'Chain'}
+};
+const ISLAND_PRESETS={
+  natural:{drama:0,terraces:0,shelf:1,stacks:0.25,mist:0.12,spread:1},
+  cinematic:{drama:1.05,terraces:0.45,shelf:1.3,stacks:0.9,mist:0.62,spread:1.06},
+  storybook:{drama:0.55,terraces:0.75,shelf:1.15,stacks:0.5,mist:0.48,spread:0.94},
+  epic:{drama:1.5,terraces:0.15,shelf:0.85,stacks:1.5,mist:0.32,spread:1.16}
+};
 const ISLAND_DEFAULTS={style:'wild',biome:'temperate',count:5,relief:1,coast:1,beach:1,features:1,
+  layout:'scattered',spread:1,drama:0,terraces:0,shelf:1,stacks:0.25,mist:0.12,
   trees:1,treeScale:1,grass:1,rocks:1,flowers:1,landmarks:1,cascades:1,birds:true,wind:1,surf:1};
 /* Keep the public generator safe even when invoked outside the settings UI. */
 function islandConfig(input){
@@ -34,15 +55,18 @@ function islandConfig(input){
   return {
     style:Object.prototype.hasOwnProperty.call(ISLAND_STYLES,o.style)?o.style:'wild',
     biome:o.biome==='mixed'||Object.prototype.hasOwnProperty.call(ISLAND_BIOMES,o.biome)?o.biome:'temperate',
+    layout:Object.prototype.hasOwnProperty.call(ISLAND_LAYOUTS,o.layout)?o.layout:'scattered',
     count:Math.round(number(o.count,3,5,5)),relief:number(o.relief,0.6,1.45,1),
     coast:number(o.coast,0.5,1.2,1),beach:number(o.beach,0.5,1.5,1),features:number(o.features,0,1.5,1),
+    spread:number(o.spread,0.75,1.5,1),drama:number(o.drama,0,1.5,0),terraces:number(o.terraces,0,1.5,0),
+    shelf:number(o.shelf,0.6,1.6,1),stacks:number(o.stacks,0,1.5,0.25),mist:number(o.mist,0,1.5,0.12),
     trees:number(o.trees,0,1.7,1),treeScale:number(o.treeScale,0.7,1.4,1),
     grass:number(o.grass,0,1.5,1),rocks:number(o.rocks,0,1.5,1),
     flowers:number(o.flowers,0,1.5,1),landmarks:number(o.landmarks,0,1.5,1),cascades:number(o.cascades,0,1.5,1),
     birds:typeof o.birds==='boolean'?o.birds:true,wind:number(o.wind,0,1.5,1),surf:number(o.surf,0,1.5,1)
   };
 }
-const islands={active:false,seed:0,options:islandConfig(),land:[],coast:[],trees:null,treeCount:0,details:null,nextCrash:0};
+const islands={active:false,seed:0,options:islandConfig(),land:[],coast:[],trees:null,treeCount:0,details:null,nextCrash:0,shoreClock:0};
 
 function islandRandom(seed){
   let a=seed>>>0;
@@ -79,12 +103,15 @@ function islandProfile(I,x,z){
   const beach=Math.pow(Math.max(0,Math.cos(a-I.beach)),8)*0.95+
               Math.pow(Math.max(0,Math.cos(a-I.beach-2.5)),14)*0.65;
   const b=clamp(beach*I.beachWidth,0,1);
+  /* A wider shelf keeps more of the sea shallow, which is what turns a coast
+     into the turquoise reef-flat and surf zone of a cinematic shot. */
+  const shelfOuter=1.36+0.20*(I.shelf-1);
   /* Fade the outer shelf deep into the sea, rather than ending at a visible
      flat underwater edge. */
-  const shelf=-22+22.75*sstep(1.36,0.985,r);
-  /* Vary the width and height of the coastal escarpment. Beaches push it
-     inland; gullies and headlands break the silhouette into natural ridges. */
-  const cliff=sstep(1.01-0.10*b,0.76-0.19*b,r);
+  const shelf=-22+22.75*sstep(shelfOuter,0.985,r);
+  /* Vertical drama narrows and steepens the coastal escarpment. Beaches push
+     it inland; gullies and headlands break the silhouette into natural ridges. */
+  const cliff=sstep(1.01-0.10*b-0.035*I.drama,Math.max(0.42,0.76-0.19*b-0.09*I.drama),r);
   const inland=sstep(1.0,0.62,r);
   const d1=Math.hypot((u-I.peakX)*0.9,(v-I.peakZ)*1.1);
   const d2=Math.hypot(u+0.30+I.peakX*0.3,v-0.25+I.peakZ*0.3);
@@ -101,7 +128,11 @@ function islandProfile(I,x,z){
     const micro=islandNoise(x*1.63-7,z*1.63+11,I.seed+517);
     const ridgedDetail=(1-Math.abs(broad*2-1))*0.52+(1-Math.abs(fine*2-1))*0.29+
                        (1-Math.abs(micro*2-1))*0.19;
-    hills+=(ridgedDetail-0.55)*2.35*amount*cliff;
+    /* Drama sharpens the crests instead of merely scaling them: the folded
+       noise is raised to a higher power, which deepens the gullies between
+       neighbouring ridges and leaves the summits as thin blades. */
+    const sharpened=I.drama>0.001?Math.pow(ridgedDetail,1+0.85*I.drama):ridgedDetail;
+    hills+=(sharpened-0.55)*2.35*amount*cliff*(1+0.32*I.drama);
   }
   /* Biome landforms live inside the existing coastal envelope, so channels,
      surf and the shoreline map still use exactly the rendered heightfield. */
@@ -121,6 +152,15 @@ function islandProfile(I,x,z){
   }else if(I.biome==='desert'){
     const mesa=sstep(0.75,0.49,r)*(0.48+0.52*sstep(0.46,0.34,r));
     formation=I.peak*0.78*mesa+0.35*Math.sin((shelf+rock)*2.3+I.phase)*cliff;
+  }else if(I.biome==='atoll'){
+    /* A continuous ring of motu forms after assembly, where it can also dig
+       the lagoon below sea level. Nothing is added here. */
+    formation=0;
+  }else if(I.biome==='fjord'){
+    /* The drowned channel enters from the western shore and dead-ends before
+       the summit, so water reaches deep inland without severing the island.
+       It is carved below sea level after assembly. */
+    formation=0;
   }else if(I.biome==='moss'){
     /* Mossland is the most detailed landform: a domain-warped ridge field
        raises fluted karst towers and buttresses, broad shelves are terraced
@@ -158,14 +198,41 @@ function islandProfile(I,x,z){
   const erosion=gully*cliff*(1-inland*0.65)*(0.5+1.1*sstep(0.45,0.9,r));
   const ledge=Math.sin((shelf+rock)*2.4+fine*5.0)*0.16*cliff*(1-inland*0.65);
   let height=shelf+rock+hills+ledge-erosion+formation*amount;
-  if(I.biome==='moss'){
-    /* Terrace the settled surface, not one component: every shelf, shoulder
-       and tower becomes a stack of steps with steep risers, while the beach
-       and the summit stay smooth so the surf line and the ball grid still
-       agree with what is drawn. */
+  /* Vertical drama also lifts everything above the beach, which is what turns
+     a hilly silhouette into a horizon of towers and knife-edge crests. */
+  if(I.drama>0.001&&height>1.2) height=1.2+(height-1.2)*(1+0.22*I.drama);
+  if(I.biome==='atoll'){
+    /* Ring of low coral motu around a real lagoon. The ring is smooth enough
+       to stay unbroken under any noise the seed produces, so the atoll is one
+       connected shore, while the centre lies several metres below the sea. */
+    const wobble=0.055*Math.sin(a*3.0+I.phase)+0.028*Math.sin(a*5.0-I.phase*1.6)+
+                 (broad-0.5)*0.10;
+    const ring=Math.exp(-Math.pow((r+wobble-0.70)/0.19,2.0));
+    const motu=(2.7+4.4*broad+1.4*fine)*ring-4.6*(1-ring);
+    const blend=sstep(1.10,0.74,r)*clamp(0.55+0.45*I.features,0,1);
+    height=lerp(height,motu,blend);
+  }else if(I.biome==='fjord'){
+    /* Cut the drowned channel and raise the shoulders and walls either side.
+       The carve only reaches inland from the western coast, so the massif
+       around it remains one continuous collidable island. */
+    const channel=Math.exp(-Math.pow((v+0.10-0.09*Math.sin(u*3.1+I.phase*2.0))/0.135,2.0));
+    /* The channel dead-ends at about a third of the way in, well before the
+       summit, so the massif above it is never cut through. */
+    const reach=sstep(-0.22,-0.48,u)*sstep(1.06,0.55,r);
+    const wall=Math.exp(-Math.pow((Math.abs(v+0.10)-0.25-0.05*Math.sin(u*3.4))/0.13,2.0))*reach;
+    height+=wall*I.peak*0.38+I.peak*0.16*reach*(1-channel);
+    height=lerp(height,-3.4-1.1*broad,clamp(channel*reach*0.94,0,0.94));
+  }
+  /* Terracing is a generation setting for every biome, and the mossland
+     landform keeps its own stronger default. Step the settled surface, not
+     one component: shelves, shoulders and towers become stacked benches with
+     steep risers while beach and summit stay smooth, so the surf line and the
+     ball grid still agree with what is drawn. */
+  const terrace=I.biome==='moss'?Math.max(0.82,I.terraces):I.terraces;
+  if(I.biome==='moss'||I.terraces>0.001){
     const st=1.55, q=height/st, qi=Math.floor(q), qf=q-qi;
     const stepped=(qi+Math.pow(sstep(0.22,0.78,qf),1.6))*st;
-    const blend=0.82*sstep(0.5,2.2,height)*(1-0.40*sstep(19,25,height));
+    const blend=Math.min(1,terrace*sstep(0.5,2.2,height)*(1-0.40*sstep(19,25,height)));
     height=lerp(height,stepped,blend);
   }
   if(I.biome==='desert'){
@@ -233,20 +300,24 @@ function islandGround(x,z,out){
   return best;
 }
 
-/* RG8: R = terrain height (-12..28 m), G = distance to dry land (0..12 m).
+/* RGBA8 shoreline field, sampled by the water shader:
+     R  terrain height (-12..28 m), so shoals and lagoons know their depth
+     G  distance to dry land (0..12 m), which drives the surf line
+     B,A  seaward shoreline normal (encoded 0..1), so breakers can face the
+          real coast instead of an invented circle around each island.
    The distance transform lets the ocean draw a thin, animated surf line even
    where a near-vertical cliff gives almost no shallow-water pixels. */
 const texIslandMap=gl.createTexture();
 gl.activeTexture(gl.TEXTURE11); gl.bindTexture(gl.TEXTURE_2D,texIslandMap);
-gl.texImage2D(gl.TEXTURE_2D,0,gl.RG8,1,1,0,gl.RG,gl.UNSIGNED_BYTE,new Uint8Array([0,255]));
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,255,128,128]));
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
 function makeIslandMap(){
-  const n=ISLAND_MAP_SIZE, step=2*ISLAND_MAP_HALF/n, data=new Uint8Array(n*n*2), dist=new Float32Array(n*n);
+  const n=ISLAND_MAP_SIZE, step=2*ISLAND_MAP_HALF/n, data=new Uint8Array(n*n*4), dist=new Float32Array(n*n);
   for(let j=0;j<n;j++) for(let i=0;i<n;i++){
     const x=(i+0.5)*step-ISLAND_MAP_HALF,z=(j+0.5)*step-ISLAND_MAP_HALF,k=j*n+i;
     const h=islandGround(x,z);
-    data[k*2]=Math.round(clamp((h+ISLAND_MAP_DEPTH)/40,0,1)*255);
+    data[k*4]=Math.round(clamp((h+ISLAND_MAP_DEPTH)/40,0,1)*255);
     dist[k]=h>=0?0:1e5;
   }
   const diag=Math.SQRT2;
@@ -260,10 +331,22 @@ function makeIslandMap(){
     const k=y*n+x; let d=dist[k];
     if(x<n-1) d=Math.min(d,dist[k+1]+1);
     if(y<n-1){ d=Math.min(d,dist[k+n]+1); if(x>0)d=Math.min(d,dist[k+n-1]+diag); if(x<n-1)d=Math.min(d,dist[k+n+1]+diag); }
-    dist[k]=d; data[k*2+1]=Math.round(clamp(d*step/12,0,1)*255);
+    dist[k]=d; data[k*4+1]=Math.round(clamp(d*step/12,0,1)*255);
+  }
+  /* The distance field grows offshore, so its gradient already points to
+     sea. Store that seaward direction: the water shader compares it with the
+     wind to decide which shores are windward. Sampling two cells out smooths
+     the chamfer metric into a stable normal on headlands and in coves. */
+  for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+    const k=y*n+x, x0=Math.max(0,x-2),x1=Math.min(n-1,x+2),y0=Math.max(0,y-2),y1=Math.min(n-1,y+2);
+    let nx=dist[y*n+x1]-dist[y*n+x0], nz=dist[y1*n+x]-dist[y0*n+x];
+    let l=Math.hypot(nx,nz);
+    if(l<1e-4){ nx=0; nz=1; l=1; }
+    data[k*4+2]=Math.round(clamp(nx/l*0.5+0.5,0,1)*255);
+    data[k*4+3]=Math.round(clamp(nz/l*0.5+0.5,0,1)*255);
   }
   gl.activeTexture(gl.TEXTURE11); gl.bindTexture(gl.TEXTURE_2D,texIslandMap);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RG8,n,n,0,gl.RG,gl.UNSIGNED_BYTE,data);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,n,n,0,gl.RGBA,gl.UNSIGNED_BYTE,data);
 }
 
 /* Textures start with sensible fallback colours and load on first use. Keeping
@@ -302,6 +385,57 @@ function islandTexture(rgb,file,repeat){
   image.src='assets/'+file;
   return tex;
 }
+/* ---- plant cutouts -------------------------------------------------------
+   The new species are photographic billboards packed into one texture array,
+   so the whole understorey is a single instanced draw. Layers are fixed by
+   PLANT_KINDS order; an image that has not arrived yet is simply a transparent
+   layer, which the shader discards, so nothing pops or disappears. */
+const plantAtlas={tex:null,size:0,layers:0,loaded:0};
+function plantAtlasSize(){
+  try{
+    if(typeof window!=='undefined'&&window.AquaBoot&&window.AquaBoot.safeMode) return 256;
+    if(matchMedia('(pointer: coarse)').matches||matchMedia('(any-pointer: coarse)').matches) return 320;
+  }catch(e){}
+  return 512;
+}
+function makePlantAtlas(){
+  if(plantAtlas.tex) return plantAtlas;
+  const kinds=typeof PLANT_KINDS!=='undefined'?PLANT_KINDS:[], size=plantAtlasSize(), layers=Math.max(1,kinds.length);
+  const tex=gl.createTexture();
+  gl.activeTexture(gl.TEXTURE13); gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);
+  gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.RGBA8,size,size,layers,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  plantAtlas.tex=tex; plantAtlas.size=size; plantAtlas.layers=layers; plantAtlas.loaded=0;
+  kinds.forEach((kind,layer)=>{
+    const image=new Image();
+    image.onload=()=>{
+      if(gl.isContextLost()) return;
+      /* Normalise into a square canvas ourselves. WebGL is not required to
+         honour UNPACK_FLIP_Y_WEBGL for 3D/array uploads, so the atlas keeps
+         the image's natural orientation and the plant shader flips V when it
+         samples. That puts the plant's base at the bottom on every driver.
+         Stretching to a square is safe: the billboard restores the species'
+         true proportions from the aspect table. */
+      const canvas=document.createElement('canvas');
+      canvas.width=size; canvas.height=size;
+      const ctx=canvas.getContext('2d');
+      if(!ctx) return;
+      ctx.clearRect(0,0,size,size);
+      ctx.drawImage(image,0,0,size,size);
+      gl.activeTexture(gl.TEXTURE13); gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);
+      gl.texSubImage2D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,size,size,gl.RGBA,gl.UNSIGNED_BYTE,canvas);
+      gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+      plantAtlas.loaded++;
+    };
+    image.onerror=()=>{ /* a transparent layer is a safe, invisible fallback */ };
+    image.src='assets/'+kind.file;
+  });
+  return plantAtlas;
+}
+
 let islandTextures=null;
 function loadIslandTextures(biome){
   if(!islandTextures){
@@ -334,6 +468,8 @@ function loadIslandTextures(biome){
   }
   if((biome==='moss'||biome==='mixed')&&!islandTextures.moss)
     islandTextures.moss=islandTexture([44,72,34,255],'plants/moss-carpet.jpg',true);
+  /* Every biome now has billboard species from the generated cutout set. */
+  islandTextures.plants=makePlantAtlas();
 }
 
 const ISLAND_VS=HDR+`
@@ -349,7 +485,7 @@ const ISLAND_FS=HDR+COMMON+`
 in vec3 vWorld; in vec3 vN; out vec4 o;
 uniform sampler2D uRock,uGrass,uSand,uTalus;
 uniform sampler2D uBasalt,uSandstone,uMoss;
-uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover,uBiome;
+uniform vec3 uCamEff; uniform float uMode,uMirror,uSea,uSnowCover,uBiome,uMist;
 uniform vec4 uIsland; uniform vec4 uIslandForm;
 vec3 triRock(vec3 p,vec3 n){
   vec3 w=pow(abs(n),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
@@ -411,6 +547,27 @@ void main(){
     stone=pow(stone,vec3(1.65))*vec3(0.95,0.77,0.60)*(0.95+0.22*n);
     float strata=0.88+0.12*sin(vWorld.y*3.0+n*2.5);
     albedo=mix(stone*strata,sand*vec3(0.98,0.74,0.52),level*0.30+beach*0.32);
+  }else if(uBiome>5.5&&uBiome<6.5){
+    /* Atoll: coral sand and rubble, a pale lagoon floor and low green motu
+       vegetation. The lagoon reads pale turquoise because the water shader
+       sees the same shallow heightfield. */
+    vec3 coral=pow(texture(uSand,vWorld.xz*0.55).rgb,vec3(1.55))*vec3(1.14,1.07,0.92);
+    vec3 rubble=pow(texture(uTalus,vWorld.xz*0.70).rgb,vec3(1.60))*vec3(0.94,1.02,0.97);
+    float lagoon=1.0-smoothstep(-1.6,1.4,vWorld.y);
+    albedo=mix(coral,rubble,level*0.26);
+    albedo=mix(albedo,albedo*vec3(0.74,0.99,0.96)*(0.86+0.20*n),lagoon*0.55);
+    albedo=mix(albedo,grass*vec3(0.86,1.12,0.72),vegetated*0.58);
+    albedo=mix(albedo,sand*1.06,beach*0.72);
+  }else if(uBiome>6.5&&uBiome<7.5){
+    /* Fjord: wet black rock, moss ledges and snow-bright shoulders. */
+    vec3 wetRock=pow(rock,vec3(1.35))*vec3(0.66,0.72,0.76)*(0.86+0.26*n);
+    vec3 ledgeMoss=pow(texture(uMoss,vWorld.xz*0.42).rgb,vec3(1.30))*vec3(0.76,1.06,0.74)*(0.90+0.20*n2);
+    float shelfMask=smoothstep(0.40,0.84,N.y)*smoothstep(1.0,3.0,vWorld.y);
+    albedo=mix(wetRock,ledgeMoss,shelfMask*(0.34+0.30*n));
+    albedo=mix(albedo,grass*vec3(0.72,0.94,0.72),vegetated*0.30);
+    albedo=mix(albedo,sand*0.62,beach*0.42);
+    float fjordSnow=smoothstep(7.0,13.0,vWorld.y)*level*(0.72+0.28*n);
+    albedo=mix(albedo,vec3(0.72,0.77,0.80),fjordSnow*0.85);
   }else{
     /* Mossland: generated moss carpet on the shelves, wet dark rock on the
        risers, pale lichen crusts and damp seeps in the hollows. */
@@ -427,17 +584,36 @@ void main(){
   float snow=uSnowCover*level*smoothstep(4.0,12.0,vWorld.y)*(0.7+0.3*n);
   if(uBiome>2.5&&uBiome<3.5) snow=max(snow,level*smoothstep(6.5,12.5,vWorld.y)*(0.70+0.30*n));
   albedo=mix(albedo,vec3(0.68,0.73,0.75),snow*0.85);
+  /* Running waterline: a bright, broken lace of foam where the sea actually
+     reaches the shore, and a darker wet glaze just above it. This is what
+     makes the water look like it is racing up the sand rather than stopping
+     at a painted line. */
+  float reach=0.04+0.30*uSea+0.10*sin(uTime*0.9+vWorld.x*0.31+vWorld.z*0.23);
+  float runUp=uSea*0.55+reach*0.30;
+  float shoreBand=1.0-smoothstep(0.05,0.26+0.24*uSea,abs(vWorld.y-runUp));
+  float laceA=texture(uDetail,vWorld.xz*1.35+vec2(uTime*0.07,-uTime*0.05)).a;
+  float laceB=texture(uDetail,vWorld.xz*2.9-vec2(uTime*0.10,uTime*0.045)).a;
+  float foamLine=shoreBand*smoothstep(0.40,0.70,laceA*0.62+laceB*0.38);
   /* Waterline and rain leave the lower cliff dark and glossy. */
   float wet=1.0-smoothstep(0.15+uSea*0.4,1.9+uSea*1.4,vWorld.y);
   wet=max(wet,uRain*0.18);
   albedo*=mix(1.0,0.53,wet);
+  /* Foam goes on after the wet glaze: otherwise the dark, soaked sand would
+     swallow the very lace that marks where the swash has just withdrawn. */
+  albedo=mix(albedo,vec3(0.84,0.89,0.88),foamLine*0.72);
   float nl=max(dot(N,uLight),0.0);
   vec3 hemi=mix(uHorizon*0.37+vec3(0.025,0.035,0.04),uZenith*0.45+vec3(0.10),N.y*0.5+0.5);
   vec3 col=albedo*(hemi+vec3(0.22*uAmbLum)+uSunCol*nl*0.48);
   vec3 H=normalize(uLight+V);
   float spec=pow(max(dot(N,H),0.0),mix(22.0,110.0,wet))*(0.015+0.17*wet)*nl;
   col+=uSunCol*spec;
-  col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
+  float dist=length(uCamEff-vWorld);
+  col=mix(col,uFogCol,1.0-exp(-dist*uFogD));
+  /* Coastal mist: a low, distance-weighted veil that pools over the shore.
+     It is strongest near sea level, which is what gives long shots their
+     layered, cinematic depth without hiding the terrain. */
+  float mist=uMist*(1.0-exp(-dist*0.006))*exp(-max(vWorld.y-0.15,0.0)*0.115);
+  col=mix(col,uFogCol*1.03,clamp(mist,0.0,0.72));
   if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
 }`;
 
@@ -521,7 +697,9 @@ function makeIslandTrees(random,options){
 function makeIslandCoast(){
   islands.coast.length=0;
   for(const I of islands.land){
-    const count=Math.round(38+I.rx*2);
+    /* More samples than before: the surf line is now continuous, so beaches
+       and headlands need even coverage rather than only steep cliff gates. */
+    const count=Math.round(46+I.rx*2.6);
     for(let j=0;j<count;j++){
       const a=(j+0.5)*Math.PI*2/count,ca=Math.cos(a),sa=Math.sin(a);
       function point(r){ const lx=ca*I.rx*r,lz=sa*I.rz*r; return [I.x+I.cs*lx-I.sn*lz,I.z+I.sn*lx+I.cs*lz]; }
@@ -531,12 +709,41 @@ function makeIslandCoast(){
         if(islandGround(p[0],p[1])>0) lo=mid; else hi=mid;
       }
       const shore=point((lo+hi)*0.5),inside=point(Math.max(0.1,lo-0.15));
-      /* Only exposed steep shores make vertical cliff impacts, not sandy coves. */
-      if(islandGround(inside[0],inside[1])<2.2) continue;
-      let nx=I.cs*ca/I.rx-I.sn*sa/I.rz,nz=I.sn*ca/I.rx+I.cs*sa/I.rz;
-      const l=Math.hypot(nx,nz); nx/=l;nz/=l;
-      islands.coast.push({x:shore[0]+nx*0.35,z:shore[1]+nz*0.35,nx,nz,last:0,cool:0});
+      /* Use the sampled surface for the seaward normal, so a breaker faces the
+         real beach or headland rather than an ellipse approximating it. */
+      const e=0.65;
+      let nx=islandGround(shore[0]-e,shore[1])-islandGround(shore[0]+e,shore[1]);
+      let nz=islandGround(shore[0],shore[1]-e)-islandGround(shore[0],shore[1]+e);
+      let l=Math.hypot(nx,nz);
+      if(l<1e-5){
+        nx=I.cs*ca/I.rx-I.sn*sa/I.rz; nz=I.sn*ca/I.rx+I.cs*sa/I.rz; l=Math.hypot(nx,nz)||1;
+      }
+      nx/=l;nz/=l;
+      const insideH=islandGround(inside[0],inside[1]);
+      islands.coast.push({x:shore[0]+nx*0.35,z:shore[1]+nz*0.35,nx,nz,
+        /* Steep shores throw plumes; gentle ones receive running wash. */
+        steep:insideH>=2.2,last:0,cool:0,wash:0});
     }
+  }
+  refreshStackCoast();
+}
+/* Sea stacks are land in the surf zone, so waves race and break around them
+   as well. Their instance layout is (x, baseY, z, width, ...). Refreshing
+   only these entries keeps the coast array identity stable, which lets a
+   detail-only rebuild update the stacks without clearing the cliff surf. */
+function refreshStackCoast(){
+  for(let i=islands.coast.length-1;i>=0;i--) if(islands.coast[i].stack) islands.coast.splice(i,1);
+  const stacks=islands.details&&islands.details.stacks;
+  const data=stacks&&(stacks.data||(stacks.instances&&stacks.instances.data));
+  if(!data) return;
+  for(let i=0;i<data.length;i+=8){
+    const x=data[i],z=data[i+2];
+    let nx=0,nz=1;
+    for(const I of islands.land){
+      const ox=x-I.x,oz=z-I.z,dist=Math.hypot(ox,oz);
+      if(dist<Math.max(I.rx,I.rz)*1.6&&dist>0.001){ nx=ox/dist; nz=oz/dist; break; }
+    }
+    islands.coast.push({x,z,nx,nz,steep:true,last:0,cool:0,wash:0,stack:true});
   }
 }
 
@@ -583,20 +790,51 @@ function generateIslands(seed,options){
      distinctive silhouette and it keeps the coast readable at a glance. The
      remaining islands still draw their biomes from a seeded shuffle. */
   biomeOrder.splice(biomeOrder.indexOf('volcanic'),1); biomeOrder.unshift('volcanic');
+  /* Layout presets move the same five seeded islands. A lagoon puts them in a
+     ring around a sheltered bay; a chain turns them into smaller barrier
+     islands along one seeded bearing. Every position still goes through the
+     channel guarantee below, so no layout can close the navigable water. */
+  const count=Math.min(config.count,layouts.length), positions=[];
+  if(config.layout==='lagoon'){
+    const ring=(31+random()*3.4)*config.spread;
+    for(let i=0;i<count;i++){
+      const angle=layoutAngle+i*Math.PI*2/count+(random()-0.5)*0.16;
+      positions.push([Math.sin(angle)*ring,Math.cos(angle)*ring+7,1]);
+    }
+  }else if(config.layout==='chain'){
+    /* Smaller barrier islands, spaced by their own radii. The chain limits
+       its spread so even the outermost island stays inside the shoreline
+       map and every pair keeps a navigable channel. */
+    const sizeScale=0.62, spread=Math.min(config.spread,1.2);
+    const radii=layouts.map(p=>(p[2]+p[3])*0.5*sizeScale);
+    const offsets=[0];
+    for(let i=1;i<count;i++) offsets.push(offsets[i-1]+1.42*(radii[i-1]+radii[i])+2.2);
+    const mid=offsets[count-1]/2, bearing=layoutAngle+0.7;
+    for(let i=0;i<count;i++){
+      const t=(offsets[i]-mid)*spread;
+      positions.push([Math.cos(bearing)*t,Math.sin(bearing)*t+7,sizeScale]);
+    }
+  }else{
+    for(let i=0;i<count;i++){
+      const p=layouts[i];
+      positions.push([p[0]*flip*config.spread,(p[1]+19)*config.spread,1]);
+    }
+  }
   islands.active=true; loadIslandTextures(config.biome);
-  for(let i=0;i<config.count;i++){
-    const p=layouts[i],ang=(random()-0.5)*1.3+layoutAngle;
-    const px=p[0]*flip,pz=p[1]+19;
+  for(let i=0;i<count;i++){
+    const p=layouts[i],pos=positions[i],ang=(random()-0.5)*1.3+layoutAngle;
+    const px=pos[0],pz=pos[1],sizeScale=pos[2];
     const biome=config.biome==='mixed'?biomeOrder[i]:config.biome;
     const I={x:lc*px-ls*pz+(random()-0.5)*2.5,z:ls*px+lc*pz-19+(random()-0.5)*2.5,
-      rx:p[2]*(0.94+random()*0.12),rz:p[3]*(0.94+random()*0.12),
+      rx:p[2]*sizeScale*(0.94+random()*0.12),rz:p[3]*sizeScale*(0.94+random()*0.12),
       cliff:p[4]*(0.9+random()*0.2)*style.cliff*config.relief,
       peak:p[5]*(0.85+random()*0.3)*style.peak*config.relief,
-      /* Karst terraces need a denser grid to be resolved rather than averaged
-         away; still well inside the 16-bit index limit. */
-      n:biome==='moss'?Math.min(184,p[6]+20):p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
+      /* Karst terraces and the drowned fjord channel need a denser grid to be
+         resolved rather than averaged away; still well inside the 16-bit
+         index limit. */
+      n:(biome==='moss'||biome==='fjord')?Math.min(184,p[6]+20):p[6],peakFalloff:p[7],cs:Math.cos(ang),sn:Math.sin(ang),
       coast:config.coast,beachWidth:config.beach*style.beach,features:config.features,
-      biome,
+      biome,drama:config.drama,terraces:config.terraces,shelf:config.shelf,
       phase:random()*Math.PI*2,beach:i===0?Math.atan2(Math.cos(ang)/p[3],Math.sin(ang)/p[2])+(random()-0.5)*0.5:random()*Math.PI*2,
       peakX:(random()-0.5)*0.4,peakZ:(random()-0.5)*0.4,seed:(islands.seed+i*131)|0};
     /* Conservative dry-land bounds include the maximum coastline distortion.
@@ -630,6 +868,7 @@ function drawIslands(mode,mirror){
   gl.uniformMatrix4fv(L(pIsland,'uVP'),false,VP); gl.uniform3fv(L(pIsland,'uCamEff'),ce);
   gl.uniform1f(L(pIsland,'uMode'),mode); gl.uniform1f(L(pIsland,'uMirror'),mirror);
   gl.uniform1f(L(pIsland,'uSea'),sea); gl.uniform1f(L(pIsland,'uSnowCover'),env.season===3?1:0);
+  gl.uniform1f(L(pIsland,'uMist'),islands.options.mist);
   bindIslandTexture(6,islandTextures.rock,pIsland,'uRock'); bindIslandTexture(7,islandTextures.grass,pIsland,'uGrass');
   bindIslandTexture(8,islandTextures.sand,pIsland,'uSand'); bindIslandTexture(9,islandTextures.talus,pIsland,'uTalus');
   bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pIsland,'uBasalt');
@@ -672,14 +911,35 @@ function updateIslandSurf(dt){
     const facing=Math.max(0,-(p.nx*dx+p.nz*dz));
     const vx=eye[0]-p.x,vz=eye[2]-p.z, viewLen=Math.hypot(vx,vz)||1;
     const visible=Math.max(0,(p.nx*vx+p.nz*vz)/viewLen);
-    const score=(0.40+0.60*facing)*(0.25+1.75*visible)*(0.6+Math.random()*0.8);
+    /* Gentle beaches get a running wash instead of a vertical plume, so a
+       rising crest always ends somewhere rather than only at a cliff gate. */
+    const score=(p.steep?0.55:0.32+facing*0.6)*(0.25+1.75*visible)*(0.6+Math.random()*0.8);
     if(score>best){best=score;hit=p;}
   }
-  if(hit){
+  if(hit&&hit.steep){
     hit.cool=simT+3.0+Math.random()*2;
     islands.nextCrash=simT+(0.32+Math.random()*0.38)/Math.max(0.35,strength);
     const power=clamp(((sea-0.42)*1.4+sky.storm*0.3)*strength,0.35,1.25);
     cliffSplash(hit.x,surfH(hit.x,hit.z,simT),hit.z,hit.nx,hit.nz,power);
     if(typeof audioCliff==='function') audioCliff(power,hit.x,hit.z);
+  }
+  /* Continuous swash: a run of white water reaches a visible shore every few
+     tenths of a second, independent of the plume budget. This is what makes
+     the sea read as racing toward land rather than pulsing at a few points. */
+  if(strength>0.01&&sea>0.30&&simT>=islands.shoreClock){
+    islands.shoreClock=simT+(0.62-0.26*clamp(sea,0,1))/Math.max(0.35,strength);
+    let shore=null,shoreBest=-1;
+    for(const p of islands.coast){
+      if(p.steep) continue;
+      const vx=eye[0]-p.x,vz=eye[2]-p.z, viewLen=Math.hypot(vx,vz)||1;
+      const visible=Math.max(0,(p.nx*vx+p.nz*vz)/viewLen);
+      const facing=0.45+0.55*Math.max(0,-(p.nx*dx+p.nz*dz));
+      const score=(0.12+visible)*(0.25+facing)*(0.55+Math.random()*0.75);
+      if(score>shoreBest){shoreBest=score;shore=p;}
+    }
+    if(shore&&typeof spawnShoreWash==='function'){
+      const power=clamp((0.26+0.58*clamp(sea,0,1)+0.22*sky.storm)*strength,0.2,1.2);
+      spawnShoreWash(shore.x,shore.z,shore.nx,shore.nz,power,shore.steep);
+    }
   }
 }

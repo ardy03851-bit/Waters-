@@ -27,7 +27,8 @@ function detailInstanceBuffer(data,geometry){
   gl.enableVertexAttribArray(first); gl.vertexAttribPointer(first,4,gl.FLOAT,false,32,0); gl.vertexAttribDivisor(first,1);
   gl.enableVertexAttribArray(first+1); gl.vertexAttribPointer(first+1,4,gl.FLOAT,false,32,16); gl.vertexAttribDivisor(first+1,1);
   gl.bindVertexArray(null);
-  return {vao,instances,vb,ib,count:data.length/8,indexCount:geometry?geometry.indices.length:0};
+  return {vao,instances,vb,ib,count:data.length/8,indexCount:geometry?geometry.indices.length:0,
+    data:new Float32Array(data)};
 }
 function rockGeometry(){
   const lat=6,lon=10,vertices=[],indices=[];
@@ -41,12 +42,39 @@ function rockGeometry(){
   }
   return {vertices:new Float32Array(vertices),indices:new Uint16Array(indices)};
 }
+/* A sea stack is a stratified pinnacle: a tapering column with three
+   wave-cut notches and a slightly overhanging cap. Vertices span y = 0..1 so
+   the instance can place the base exactly on the sampled seabed. */
+function stackGeometry(){
+  const sides=11,rings=13,vertices=[],indices=[];
+  for(let j=0;j<=rings;j++){
+    const t=j/rings;
+    const notch=0.86+0.14*Math.sin(t*17.0)-0.10*Math.exp(-Math.pow((t-0.46)/0.05,2.0))
+               -0.08*Math.exp(-Math.pow((t-0.72)/0.04,2.0));
+    const taper=0.45-0.24*t+0.16*sstep(0.78,1.0,t);
+    const r=taper*notch;
+    for(let k=0;k<=sides;k++){
+      const a=k*Math.PI*2/sides,c=Math.cos(a),s2=Math.sin(a);
+      vertices.push(c*r,t,s2*r,c,0.22,s2);
+    }
+  }
+  for(let j=0;j<rings;j++) for(let k=0;k<sides;k++){
+    const a=j*(sides+1)+k,b=a+1,c=a+sides+1,d=c+1;
+    indices.push(a,c,b,b,c,d);
+  }
+  const top=vertices.length/6;
+  vertices.push(0,1.06,0,0,1,0);
+  for(let k=0;k<sides;k++) indices.push(rings*(sides+1)+k,top,rings*(sides+1)+k+1);
+  return {vertices:new Float32Array(vertices),indices:new Uint16Array(indices)};
+}
+
 function makeIslandDetails(random,options){
   /* Dedicated streams mean a grass slider does not shuffle the boulders. */
   const rockRnd=islandRandom((random()*4294967296)>>>0);
   const grassRnd=islandRandom((random()*4294967296)>>>0);
   const birdRnd=islandRandom((random()*4294967296)>>>0);
-  const rocks=[],grass=[],birds=[],normal={nx:0,ny:1,nz:0};
+  const stackRnd=islandRandom((random()*4294967296)>>>0);
+  const rocks=[],grass=[],birds=[],stacks=[],normal={nx:0,ny:1,nz:0};
   for(const I of islands.land){
     const biome=ISLAND_BIOMES[I.biome];
     const rockTarget=Math.round((I.rx+I.rz)*1.55*options.rocks*biome.rocks);
@@ -73,6 +101,29 @@ function makeIslandDetails(random,options){
       grass.push(p[0],y-0.035,p[1],0.30+0.42*grassRnd(),grassRnd(),grassRnd(),grassRnd(),biome.id+grassRnd()*0.999);
       added++;
     }
+    /* Sea stacks rise from the shallow shelf just off the coast. They are
+       decorative (the terrain stays the only collider) but waves break and
+       foam around them through the shoreline surf sources. */
+    const stackTarget=Math.round((I.rx+I.rz)*0.24*options.stacks);
+    let stackAdded=0;
+    for(let attempt=0;attempt<stackTarget*22&&stackAdded<stackTarget;attempt++){
+      /* Stacks live outside the dry coastline, so sample the offshore ring
+         directly instead of the on-land detail distribution. */
+      const ang=stackRnd()*Math.PI*2,radial=1.02+stackRnd()*0.34;
+      const lx=Math.cos(ang)*I.rx*radial,lz=Math.sin(ang)*I.rz*radial;
+      const x=I.x+I.cs*lx-I.sn*lz,z=I.z+I.sn*lx+I.cs*lz;
+      const y=islandGround(x,z);
+      if(y<-13||y>-0.35) continue;
+      const width=0.75+stackRnd()*1.75,height=2.4+Math.pow(stackRnd(),0.8)*7.8;
+      if(y+height*0.72<1.0) continue;
+      let crowded=false;
+      for(let k=0;k<stacks.length;k+=8){
+        if((stacks[k]-x)**2+(stacks[k+2]-z)**2<Math.pow(2.4+stacks[k+3],2)){crowded=true;break;}
+      }
+      if(crowded) continue;
+      stacks.push(x,y-0.15,z,width,1,height/width,stackRnd()*Math.PI*2,biome.id+stackRnd()*0.999);
+      stackAdded++;
+    }
     /* Small flocks circle individual islands instead of attaching to the camera. */
     const count=2+Math.floor(birdRnd()*3);
     for(let i=0;i<count;i++){
@@ -81,7 +132,8 @@ function makeIslandDetails(random,options){
       birds.push(I.x,y,I.z,radius,birdRnd()*Math.PI*2,birdRnd(),birdRnd(),0.45+birdRnd()*0.35);
     }
   }
-  islands.details={rocks:detailInstanceBuffer(rocks,rockGeometry()),grass:detailInstanceBuffer(grass,null),birds:detailInstanceBuffer(birds,null)};
+  islands.details={rocks:detailInstanceBuffer(rocks,rockGeometry()),
+    stacks:detailInstanceBuffer(stacks,stackGeometry()),grass:detailInstanceBuffer(grass,null),birds:detailInstanceBuffer(birds,null)};
 }
 function disposeIslandDetails(){
   if(!islands.details) return;
@@ -96,6 +148,9 @@ function rebuildIslandDetails(options,skipScenery=false){
   if(!islands.active) return;
   disposeIslandDetails();
   makeIslandDetails(islandRandom(islands.seed^0x19b6af42),options);
+  /* Sea stacks are surf sources too; refresh just those entries so a stack
+     slider takes effect without rebuilding the terrain or clearing a plume. */
+  if(typeof refreshStackCoast==='function') refreshStackCoast();
   if(!skipScenery&&typeof rebuildIslandScenery==='function') rebuildIslandScenery(options);
 }
 
@@ -234,6 +289,12 @@ function drawIslandDetails(mode,mirror,ce){
     bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pIslandRock,'uBasalt');
     bindIslandTexture(13,islandTextures.sandstone||islandTextures.talus,pIslandRock,'uSandstone');
     gl.bindVertexArray(d.rocks.vao); gl.drawElementsInstanced(gl.TRIANGLES,d.rocks.indexCount,gl.UNSIGNED_SHORT,0,d.rocks.count);
+    /* The same lit rock material draws the offshore stacks, so they share the
+       dark wet base and pale dry cap of the coast they belong to. */
+    if(d.stacks.count){
+      gl.bindVertexArray(d.stacks.vao);
+      gl.drawElementsInstanced(gl.TRIANGLES,d.stacks.indexCount,gl.UNSIGNED_SHORT,0,d.stacks.count);
+    }
   }
   if(d.grass.count){
     gl.useProgram(pIslandGrass); setSky(pIslandGrass);

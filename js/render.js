@@ -162,6 +162,10 @@ function render(){
   gl.uniform4fv(L(pWater,'uW'),uWArr); gl.uniform1fv(L(pWater,'uQ'),uQArr); gl.uniform1fv(L(pWater,'uPhase'),uPhaseArr);
   gl.uniform1f(L(pWater,'uRipR'),RR); gl.uniform1f(L(pWater,'uRipN'),RN); gl.uniform1f(L(pWater,'uA0'),waveA0);
   gl.uniform1f(L(pWater,'uIslands'),islands.active?1:0); gl.uniform1f(L(pWater,'uSeaState'),sea);
+  /* The coast settings feed the same shoreline field the terrain is built
+     from, so breakers and the waterline foam stay in step with the land. */
+  gl.uniform1f(L(pWater,'uShoreBreak'),islands.active?islands.options.surf:0);
+  gl.uniform1f(L(pWater,'uMist'),islands.active?islands.options.mist:0);
   gl.uniform1f(L(pWater,'uUnderwater'),submerge>0.5?1:0);
   gl.uniform2f(L(pWater,'uWind'),Math.sin(windAng),Math.cos(windAng));
   gl.uniform2f(L(pWater,'uRes'),W,Hh); gl.uniform2f(L(pWater,'uNF'),0.1,3000);

@@ -22,6 +22,7 @@ const STORE_KEY='aqua.settings.v2';
 const DEFAULTS={
   type:0, size:1, maxBalls:40, launch:'drop', throwSpeed:14, islands:false, ship:false, boats:false, shipClass:0, islandSeed:0,
   islandStyle:'wild', islandBiome:'mixed', islandCount:5, islandRelief:1, islandCoast:1, islandBeach:1, islandFeatures:1,
+  islandLayout:'scattered', islandSpread:1, islandDrama:0, islandTerraces:0, islandShelf:1, islandStacks:0.25, islandMist:0.12,
   islandTrees:1, islandTreeScale:1, islandGrass:1, islandRocks:1, islandFlowers:1, islandLandmarks:1, islandCascades:1,
   islandBirds:true, islandWind:1, islandSurf:1,
   season:1, weather:'partly', hour:14.5, dayCycle:0, cloud:0.4, precip:0, fog:0.04, lightning:0, wind:8, windFrom:117, waves:1,
@@ -53,7 +54,10 @@ const SCENES=[
   {name:'Starry night',  grad:'linear-gradient(160deg,#050a1e,#16224d 55%,#04101c)', set:{season:1,weather:'clear',hour:0.5,dayCycle:0}},
   {name:'Rainbow shower',grad:'linear-gradient(160deg,#5b7fb5,#c9d6e4 55%,#e0a86b)', set:{season:1,weather:'partly',hour:5.2,dayCycle:0,cloud:0.34,precip:0.55,fog:0.08}},
   {name:'Blue-water voyage',grad:'linear-gradient(160deg,#64b9da,#b5e4e4 50%,#134b75)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,ship:true,shipClass:5}},
-  {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true,shipClass:4}}
+  {name:'Storm voyage',grad:'linear-gradient(160deg,#1c3449,#78878a 55%,#102937)',set:{season:2,weather:'storm',hour:16.5,dayCycle:0,ship:true,shipClass:4}},
+  {name:'Coral atoll',grad:'linear-gradient(160deg,#7fe0e0,#c9f4ef 52%,#0f8f9a)',set:{season:1,weather:'clear',hour:10.5,dayCycle:0,islands:true,islandBiome:'atoll',islandPreset:'cinematic'}},
+  {name:'Fjord dawn',grad:'linear-gradient(160deg,#33465c,#a8bcc4 54%,#16323f)',set:{season:0,weather:'fog',hour:'sunrise',dayCycle:0,islands:true,islandBiome:'fjord',islandPreset:'epic'}},
+  {name:'Cinematic coast',grad:'linear-gradient(160deg,#2c3f6b,#f0a868 55%,#40352f)',set:{season:2,weather:'partly',hour:'sunset',dayCycle:0,islands:true,islandPreset:'cinematic'}}
 ];
 const pct=v=>Math.round(v*100)+'%';
 function fogLabel(v){ const m=20000*Math.pow(40/20000,clamp(v,0,1)); return m>=1000?(m/1000).toFixed(m>=10000?0:1)+' km':Math.round(m/5)*5+' m'; }
@@ -84,9 +88,18 @@ const CONTROLS=[
 
   {tab:'islands',t:'toggle',k:'islands',label:'Island archipelago',sub:'Generate a coast to explore'},
   {tab:'islands',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
-  {tab:'islands',t:'seg',k:'islandBiome',label:'Biome',cols:4,opts:[['temperate','Temperate'],['tropical','Tropical'],['volcanic','Volcanic'],['alpine','Alpine'],['desert','Desert'],['moss','Mossland'],['mixed','Mixed']]},
+  {tab:'islands',t:'seg',k:'islandBiome',label:'Biome',cols:4,opts:[['temperate','Temperate'],['tropical','Tropical'],['volcanic','Volcanic'],['alpine','Alpine'],['desert','Desert'],['moss','Mossland'],['atoll','Atoll'],['fjord','Fjord'],['mixed','Mixed']]},
   {tab:'islands',t:'seg',k:'islandStyle',label:'Coast type',opts:[['wild','Wild'],['coves','Coves'],['highlands','Highlands']]},
+  {tab:'islands',t:'seg',k:'islandLayout',label:'Archipelago layout',cols:3,opts:[['scattered','Scattered'],['lagoon','Lagoon'],['chain','Chain']]},
   {tab:'islands',t:'seg',k:'islandCount',label:'Island count',opts:[[3,'3'],[4,'4'],[5,'5']]},
+  {tab:'islands',t:'range',k:'islandSpread',label:'Archipelago spread',min:0.75,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'note',text:'Cinematic generation. Presets set the drama, terrace, shelf, sea-stack and mist controls together; every slider can then be tuned on its own.'},
+  {tab:'islands',t:'buttons',items:[['Natural coast',()=>islandPreset('natural')],['Cinematic coast',()=>islandPreset('cinematic')],['Storybook coast',()=>islandPreset('storybook')],['Epic coast',()=>islandPreset('epic')]]},
+  {tab:'islands',t:'range',k:'islandDrama',label:'Vertical drama',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandTerraces',label:'Rock terraces',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandShelf',label:'Reef shelf and shallows',min:0.6,max:1.6,step:0.05,fmt:v=>v.toFixed(2)+'×'},
+  {tab:'islands',t:'range',k:'islandStacks',label:'Sea stacks',min:0,max:1.5,step:0.05,fmt:pct},
+  {tab:'islands',t:'range',k:'islandMist',label:'Coastal mist',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandRelief',label:'Mountain height',min:0.6,max:1.45,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandCoast',label:'Coastline detail',min:0.5,max:1.2,step:0.05,fmt:v=>v.toFixed(2)+'×'},
   {tab:'islands',t:'range',k:'islandBeach',label:'Coves and beaches',min:0.5,max:1.5,step:0.05,fmt:v=>v.toFixed(2)+'×'},
@@ -101,7 +114,7 @@ const CONTROLS=[
   {tab:'islands',t:'toggle',k:'islandBirds',label:'Seabirds',sub:'Flocks shelter during storms and at night'},
   {tab:'islands',t:'range',k:'islandWind',label:'Vegetation wind response',min:0,max:1.5,step:0.05,fmt:pct},
   {tab:'islands',t:'range',k:'islandSurf',label:'Cliff surf',min:0,max:1.5,step:0.05,fmt:pct},
-  {tab:'islands',t:'note',text:'The coast and its wildlife are seeded. Terrain controls rebuild the coast; planting controls update its details. New islands choose a new seed.'},
+  {tab:'islands',t:'note',text:'The coast, its plants and its wildlife are seeded. Terrain and cinematic controls rebuild the coast; planting controls update only their own details. Surf, breakers and the waterline wash follow the generated shoreline exactly.'},
 
   {tab:'sky',t:'info'},
   {tab:'sky',t:'seg',k:'season',label:'Season',opts:[[0,'Spring'],[1,'Summer'],[2,'Autumn'],[3,'Winter']]},
@@ -181,9 +194,18 @@ const S=loadSettings();
 let saveTimer=0, islandBuildTimer=0, islandRebuildMask=0, settingsBooting=true;
 function currentIslandOptions(){
   return {style:S.islandStyle,biome:S.islandBiome,count:S.islandCount,relief:S.islandRelief,coast:S.islandCoast,beach:S.islandBeach,features:S.islandFeatures,
+    layout:S.islandLayout,spread:S.islandSpread,drama:S.islandDrama,terraces:S.islandTerraces,shelf:S.islandShelf,
+    stacks:S.islandStacks,mist:S.islandMist,
     trees:S.islandTrees,treeScale:S.islandTreeScale,grass:S.islandGrass,rocks:S.islandRocks,
     flowers:S.islandFlowers,landmarks:S.islandLandmarks,cascades:S.islandCascades,
     birds:S.islandBirds,wind:S.islandWind,surf:S.islandSurf};
+}
+/* One-tap generation presets. Each writes separate settings, so the user can
+   keep exploring from the preset instead of being locked into it. */
+function islandPreset(name,quiet){
+  const preset=ISLAND_PRESETS[name]||ISLAND_PRESETS.cinematic;
+  for(const key in preset) setVal('island'+key[0].toUpperCase()+key.slice(1),preset[key]);
+  if(!quiet) toast((name||'cinematic').replace(/^./,c=>c.toUpperCase())+' coast · the landform regenerates');
 }
 /* Slider drags are coalesced; planting-only changes do not rebuild the
    heightfield, clear surf or disturb the camera and balls. */
@@ -200,7 +222,9 @@ function queueIslandRebuild(mask){
       islands.options=options;
       if(pending&2) rebuildIslandTrees(options,true);
       if(pending&4) rebuildIslandDetails(options,true);
-      if(pending&(2|8)) rebuildIslandScenery(options);
+      /* Plants draw on the tree and grass sliders, so a planting change must
+         refresh the billboard layer as well as the rocks. */
+      if(pending&(2|4|8)) rebuildIslandScenery(options);
     }
   },220);
 }
@@ -231,13 +255,15 @@ function apply(k){
         removeIslands(); cliffEvents.length=0;
       }
       resetCamera(v?'islands':'ship'); break;
-    case 'islandBiome': case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': case 'islandFeatures': queueIslandRebuild(1); break;
+    case 'islandBiome': case 'islandStyle': case 'islandCount': case 'islandRelief': case 'islandCoast': case 'islandBeach': case 'islandFeatures':
+    case 'islandLayout': case 'islandSpread': case 'islandDrama': case 'islandTerraces': case 'islandShelf': queueIslandRebuild(1); break;
     case 'islandTrees': case 'islandTreeScale': queueIslandRebuild(2); break;
-    case 'islandGrass': case 'islandRocks': queueIslandRebuild(4); break;
+    case 'islandGrass': case 'islandRocks': case 'islandStacks': queueIslandRebuild(4); break;
     case 'islandFlowers': case 'islandLandmarks': case 'islandCascades': queueIslandRebuild(8); break;
     case 'islandBirds': if(islands.active) islands.options.birds=v; break;
     case 'islandWind': if(islands.active) islands.options.wind=v; break;
     case 'islandSurf': if(islands.active) islands.options.surf=v; break;
+    case 'islandMist': if(islands.active) islands.options.mist=v; break;
     case 'season': env.season=v; break;
     case 'weather': env.forceSnow=!!(WEATHERS[v]&&WEATHERS[v].snow); break;
     case 'hour': env.hour=v; break;
@@ -300,6 +326,9 @@ function userSet(k,v){
 }
 function applyScene(sc){
   const o=sc.set, st=sunTimes(o.season);
+  if(o.islands!==undefined) setVal('islands',o.islands);
+  if(o.islandBiome) setVal('islandBiome',o.islandBiome);
+  if(o.islandPreset) islandPreset(o.islandPreset,true);
   if(o.ship!==undefined){ setVal('ship',o.ship); if(o.ship){if(S.follow)setVal('follow',false);resetCamera('ship');} }
   if(o.shipClass!==undefined) setVal('shipClass',o.shipClass);
   setVal('season',o.season); setWeather(o.weather,true);
