@@ -36,6 +36,7 @@ function fixture(){
       seaQuakeVelocity,quakeCameraOffset,updateQuakes,clearIslandQuake,islands,balls,
       setTime(t){simT=t;}, time(){return simT;},
       setBlocked(v){blocked=v;},setGround(v){groundHeight=v;},
+      countLocalCalls(){const original=shipLocal;shipLocal=(...args)=>{globalThis.localCalls=(globalThis.localCalls||0)+1;return original(...args);};},
       activateDeck(){ship.grid=buildShipDeck(asset,meta.meshes[1]);ship.enabled=true;ship.status='ready';ship.poseReady=true;shipMatrix();}
     };
   `,ctx,{timeout:20000});
@@ -73,6 +74,23 @@ test('deck and ball contacts follow the same floating transform without lifting 
   const under=api.shipPoint(1.2,-1,0.8),submerged={x:under[0],y:under[1],z:under[2],vx:0,vy:-1,vz:0,r:0.3,type:0,e:0.5};
   api.collideShip(submerged,1/240);
   assert.equal(submerged.y,under[1],'submerged balls are not teleported through the hull');
+});
+
+test('the ship contact broad phase encloses the entire rotating deck contact box',()=>{
+  const {api,ctx}=fixture();api.activateDeck();api.countLocalCalls();
+  for(const heading of [0,0.7,Math.PI/2,2.8,Math.PI*1.75]){
+    for(const pitch of [-0.12,0,0.12]) for(const roll of [-0.14,0,0.14]){
+      Object.assign(api.ship,{x:50,z:-70,y:0.8,heading,pitch,roll});api.shipMatrix();
+      for(const x of [-10.5,0,10.5]) for(const y of [0.5,3.5,7]) for(const z of [-2.7,0,2.7]){
+        const p=api.shipPoint(x,y,z),before=ctx.localCalls||0;
+        api.collideShip({x:p[0],y:p[1],z:p[2],vx:0,vy:0,vz:0,r:0.3,type:0,e:0.5},1/240);
+        assert.equal(ctx.localCalls,before+1,'no potentially valid deck contact is culled');
+      }
+      const far=api.shipPoint(50,0,0),before=ctx.localCalls;
+      api.collideShip({x:far[0],y:far[1],z:far[2],r:0.3},1/240);
+      assert.equal(ctx.localCalls,before,'far balls need no local transform');
+    }
+  }
 });
 
 test('ship relocation searches for navigable water and returns to the play area when islands are removed',()=>{

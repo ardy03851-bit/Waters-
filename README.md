@@ -8,6 +8,12 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000` in a WebGL 2 capable browser.
 
+## Balls and capture
+
+Use **Drop ball** or tap the sea, or choose **Ball rain** for a short burst of different balls. **Clear** removes the balls and splash effects and cancels any balls still queued by rain; existing surface ripples fade naturally. A new rain can be started immediately afterwards.
+
+Under **Settings → System**, **Screenshot** saves the canvas as a PNG and **Record video** captures the canvas (without the interface or sound). Recording uses a format supported by the browser, normally WebM or MP4. Wait for the current recording to finish saving before starting another one; recording requires browser support for canvas capture and MediaRecorder.
+
 ## Sail, swim & explore
 
 Choose **Sail** in the dock (or press **B**) to load the ship and go straight to the helm. It starts at anchor. The chase view follows the actual moving hull; **Deck view** puts you aboard in first person. Drag the scene to look around in either view. You can also select **Explore** (or **U**) to start in the water, swim alongside, and board the open main deck with **E** / **Board**. From the deck, choose **Take helm** or press **B**.
@@ -59,7 +65,7 @@ The coastal surface and tree textures in `assets/` are local; no external textur
 
 Motion blur uses depth-aware camera reprojection and visible ball and ship motion, with exposure adjusted for frame time. It does not stretch the ball geometry, and history is reset after a resize or a long frame gap. Reduced-motion preferences disable motion blur by default. On slower devices, lower the render quality or splash detail.
 
-Render targets are limited by the device's WebGL dimensions and a pixel budget, especially on high-DPI touch devices. If a framebuffer allocation fails, Aqua releases the partial targets and retries at a smaller resolution. The canvas itself does not allocate redundant depth or multisample buffers: the scene's depth is stored in the offscreen targets used for refraction and motion blur.
+Render targets are limited by the device's WebGL dimensions and a pixel budget, especially on high-DPI touch devices. If a framebuffer allocation fails, Aqua releases the partial targets and retries at a smaller resolution. The canvas itself does not allocate redundant depth or multisample buffers: the scene's depth is stored in the offscreen targets used for refraction and motion blur. Unchanged ripple textures and chart coastlines are reused, and conservative ship collision broad phases leave the original detailed checks in place near the shore and deck. Balls that are safely above every possible swell and seaquake skip buoyancy samples that would be exactly zero; the full five-point calculation remains in use near the water.
 
 ## Graphics recovery
 
@@ -67,7 +73,7 @@ If the browser loses its WebGL context, rendering pauses and Aqua attempts one a
 
 ## Tests
 
-Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship deck collision and sail transparency, quake/wave synchronization, and bounded effects:
+Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship and ball collisions, sail transparency, quake/wave synchronization, ripple uploads, and bounded effects:
 
 ```sh
 node --test tests/*.test.js
@@ -80,6 +86,7 @@ npm install --prefix /tmp/aqua-browser-test --no-save playwright-core
 NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/webgl-browser.js
 NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/ship-quake-browser.js
 NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/voyage-browser.js
+NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/polish-browser.js
 ```
 
-Set `AQUA_URL` if the server is not at `http://127.0.0.1:8000/`. On headless machines without a GPU, Chromium may need software-rendering flags, for example `CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader"`. The browser tests exercise real shader compilation, desktop sailing, swimming and boarding, chart/pilot behaviour, mobile touch controls and responsive layouts, texture limits, quakes, rendering, optional-asset failure, framebuffer retry, and context-loss recovery; they do not replace visual checks on target devices.
+Set `AQUA_URL` if the server is not at `http://127.0.0.1:8000/`. On headless machines without a GPU, Chromium may need software-rendering flags, for example `CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader"`. The browser tests exercise real shader compilation, desktop sailing, swimming and boarding, chart/pilot behaviour, mobile touch controls and responsive layouts, texture limits, quakes, recording and capture failures, ripple synchronization, optional-asset failure, framebuffer retry, and context-loss recovery; they do not replace visual checks on target devices.

@@ -61,16 +61,30 @@ function collideIsland(b,dt){
 }
 
 function stepBall(b,dt){
-  const r=b.r,t=simT,o=0.65*r;
-  waveSample(b.x,b.z,t,true,S0);
-  waveSample(b.x+o,b.z,t,false,S1);const h1=S1.h;
-  waveSample(b.x-o,b.z,t,false,S1);const h2=S1.h;
-  waveSample(b.x,b.z+o,t,false,S1);const h3=S1.h;
-  waveSample(b.x,b.z-o,t,false,S1);const h4=S1.h;
-  b.wh=S0.h;
-  const Vs=(capV(S0.h,b)+capV(h1,b)+capV(h2,b)+capV(h3,b)+capV(h4,b))/5;
+  const r=b.r,t=simT;
+  waveSample(b.x,b.z,t,true,S0);b.wh=S0.h;
+  /* Each swell is bounded by its amplitude; a quake is bounded separately.
+     If the whole sphere is above that conservative maximum, all five caps
+     are exactly zero. Keep the centre sample for rendering and impacts, and
+     retain the full five-sample calculation everywhere near the water. */
+  const bottom=b.y-r;
+  let dry=false;
+  if(bottom>0&&typeof waveHeightBound==='number'&&bottom>waveHeightBound+1e-8){
+    const quakeBound=typeof seaQuakeHeightBound==='function'?seaQuakeHeightBound():
+      typeof seaQuakeHeight==='function'?Infinity:0;
+    dry=bottom>waveHeightBound+quakeBound+1e-8;
+  }
+  let Vs=0,dAvg=0;
+  if(!dry){
+    const o=0.65*r;
+    waveSample(b.x+o,b.z,t,false,S1);const h1=S1.h;
+    waveSample(b.x-o,b.z,t,false,S1);const h2=S1.h;
+    waveSample(b.x,b.z+o,t,false,S1);const h3=S1.h;
+    waveSample(b.x,b.z-o,t,false,S1);const h4=S1.h;
+    Vs=(capV(S0.h,b)+capV(h1,b)+capV(h2,b)+capV(h3,b)+capV(h4,b))/5;
+    dAvg=clamp((S0.h+h1+h2+h3+h4)/5-bottom,0,2*r);
+  }
   const frac=Vs/b.V; b.frac=frac;
-  const dAvg=clamp((S0.h+h1+h2+h3+h4)/5-(b.y-r),0,2*r);
   const meff=b.m+0.5*RHO_W*Vs;
 
   let ay=(-b.m*grav+RHO_W*waterRho*grav*Vs)/meff;
@@ -167,7 +181,8 @@ function stepBall(b,dt){
 
 function collide(){
   const n=balls.length;
-  for(let i=0;i<n;i++){const a=balls[i];for(let j=i+1;j<n;j++){const b=balls[j];
+  for(let i=0;i<n;i++){const a=balls[i];if(!a||a.dead) continue;for(let j=i+1;j<n;j++){const b=balls[j];
+    if(!b||b.dead) continue;
     const dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z,rs=a.r+b.r,d2=dx*dx+dy*dy+dz*dz;
     if(d2>=rs*rs||d2<1e-8)continue;
     const d=Math.sqrt(d2),nx=dx/d,ny=dy/d,nz=dz/d,pen=rs-d,tot=a.im+b.im;
@@ -184,7 +199,12 @@ function collide(){
       /* a water balloon popped by a hard collision with another ball */
       if(-rn>4.2){
         const wb=a.type===6?a:(b.type===6?b:null);
-        if(wb){ waterBalloonBurst(wb,-rn+1.5); wb.dead=true; if(grab&&grab.ball===wb) grab=null; return; }
+        if(wb){
+          waterBalloonBurst(wb,-rn+1.5); wb.dead=true; if(grab&&grab.ball===wb) grab=null;
+          /* A burst ends only this contact, not every other pair this step. */
+          if(wb===a) break;
+          continue;
+        }
       }
       a.vx-=jn*nx*a.im;a.vy-=jn*ny*a.im;a.vz-=jn*nz*a.im;
       b.vx+=jn*nx*b.im;b.vy+=jn*ny*b.im;b.vz+=jn*nz*b.im;
@@ -206,9 +226,10 @@ function collide(){
 const H=1/240;
 function physicsStep(){
   simT+=H; stepCount++;
-  for(let i=0;i<balls.length;i++) stepBall(balls[i],H);
-  for(let i=balls.length-1;i>=0;i--) if(balls[i].dead){ if(grab&&grab.ball===balls[i])grab=null; balls.splice(i,1); }
+  for(let i=0;i<balls.length;i++) if(!balls[i].dead) stepBall(balls[i],H);
   collide();
+  /* Contacts can pop balloons too; remove them before the next step. */
+  for(let i=balls.length-1;i>=0;i--) if(balls[i].dead){ if(grab&&grab.ball===balls[i])grab=null; balls.splice(i,1); }
   if((stepCount&1)===0) rippleStep();
 }
 

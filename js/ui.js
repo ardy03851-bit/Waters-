@@ -471,13 +471,28 @@ function dropBall(){
     spawnBall(x,surfH(x,z,simT)+4.5,z,selType);
   }
 }
+const rainTimers=new Set();
 function ballRain(){
   hideHint(); toast('Ball rain incoming');
   const cx=cameraFramesShip()?ship.x:0,cz=cameraFramesShip()?ship.z:0;
-  for(let i=0;i<10;i++) setTimeout(()=>{const x=cx+(Math.random()-0.5)*11,z=cz+(Math.random()-0.5)*11;
-    spawnBall(x,surfH(x,z,simT)+5+Math.random()*5,z,Math.floor(Math.random()*TYPES.length));},i*110);
+  for(let i=0;i<10;i++){
+    const timer=setTimeout(()=>{
+      rainTimers.delete(timer);
+      const x=cx+(Math.random()-0.5)*11,z=cz+(Math.random()-0.5)*11;
+      spawnBall(x,surfH(x,z,simT)+5+Math.random()*5,z,Math.floor(Math.random()*TYPES.length));
+    },i*110);
+    rainTimers.add(timer);
+  }
 }
-function clearAll(){ const n=balls.length; balls.length=0; grab=null; clearSplashes(); replay($('bClear'),'fired'); toast(n?'Cleared '+n+' ball'+(n>1?'s':''):'Nothing to clear'); }
+function clearAll(){
+  const n=balls.length,pending=rainTimers.size;
+  const hadEffects=pCount>0||splashEvents.length||cliffEvents.length||surfSheets.length||coastFoam.length||windStreaks.length;
+  for(const timer of rainTimers) clearTimeout(timer);
+  rainTimers.clear();balls.length=0;grab=null;clearSplashes();replay($('bClear'),'fired');
+  const message=n?'Cleared '+n+' ball'+(n===1?'':'s')+(pending?' · rain cancelled':''):
+    pending?'Ball rain cancelled':hadEffects?'Cleared splashes':'Nothing to clear';
+  toast(message);
+}
 function toggleSlow(){
   slowMo=!slowMo; applySpeed();
   $('bSlow').classList.toggle('on',slowMo); $('bSlow').setAttribute('aria-pressed',slowMo?'true':'false'); document.body.classList.toggle('slow',slowMo);
@@ -520,35 +535,83 @@ function setCinema(on){
 ['fullscreenchange','webkitfullscreenchange'].forEach(ev=>
   document.addEventListener(ev,()=>{ if(cinema&&!(document.fullscreenElement||document.webkitFullscreenElement)) setCinema(false); }));
 
-/* ---- video recording: capture the canvas to a downloadable webm ---- */
-let mediaRec=null, recChunks=[];
-function toggleRecord(){
-  if(mediaRec&&mediaRec.state!=='inactive'){ mediaRec.stop(); return; }
-  if(!window.MediaRecorder||!canvas.captureStream){ toast('Recording is not supported in this browser'); return; }
-  let mime='video/webm;codecs=vp9';
-  if(!MediaRecorder.isTypeSupported(mime)) mime='video/webm';
-  const stream=canvas.captureStream(60);
-  try{ mediaRec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8000000}); }
-  catch(e){ try{ mediaRec=new MediaRecorder(stream); }catch(e2){ toast('Recording failed to start'); return; } }
-  recChunks=[];
-  mediaRec.ondataavailable=ev=>{ if(ev.data&&ev.data.size) recChunks.push(ev.data); };
-  mediaRec.onstop=()=>{
-    document.body.classList.remove('recording');
-    const btn=$('recBtn'); if(btn) btn.firstChild.textContent='Record video';
-    try{
-      const b=new Blob(recChunks,{type:'video/webm'});
-      const a=document.createElement('a'), u=URL.createObjectURL(b);
-      a.href=u; a.download='aqua-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.webm';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(u),4000);
-      toast('Recording saved');
-    }catch(e){ toast('Could not save the recording'); }
-  };
-  mediaRec.start(250);
-  document.body.classList.add('recording');
-  const btn=$('recBtn'); if(btn) btn.firstChild.textContent='Stop recording';
-  toast('Recording…');
+/* ---- video recording: keep each capture and its chunks together until stop ---- */
+let recording=null;
+function setRecordingUI(phase){
+  document.body.classList.toggle('recording',phase==='recording');
+  const btn=$('recBtn');
+  if(btn){
+    btn.firstChild.textContent=phase==='recording'?'Stop recording':phase==='stopping'?'Finishing…':'Record video';
+    btn.disabled=phase==='stopping';btn.setAttribute('aria-pressed',phase==='recording'?'true':'false');
+  }
 }
+function stopCaptureTracks(stream){
+  let tracks=[];
+  try{tracks=stream.getTracks();}catch(e){}
+  for(const track of tracks) try{track.stop();}catch(e){}
+}
+function finishRecording(session){
+  if(session.finished) return;
+  session.finished=true;clearTimeout(session.errorTimer);stopCaptureTracks(session.stream);
+  if(recording===session){recording=null;setRecordingUI('idle');}
+  if(!session.chunks.length){toast(session.failed?'Recording failed':'No video was recorded');return;}
+  try{
+    /* The browser may choose MP4 instead of WebM, especially on Safari. */
+    const mime=session.rec.mimeType||session.chunks[0].type||session.mime||'video/webm';
+    const format=mime.split(';')[0].trim().toLowerCase();
+    const ext=({'video/mp4':'mp4','video/quicktime':'mov','video/x-matroska':'mkv','video/ogg':'ogv','video/webm':'webm'})[format]||'video';
+    const blob=new Blob(session.chunks,{type:mime}),a=document.createElement('a'),url=URL.createObjectURL(blob);
+    try{
+      a.href=url;a.download='aqua-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.'+ext;
+      document.body.appendChild(a);a.click();
+    }finally{a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);}
+    toast(session.failed?'Recording stopped · partial video saved':'Recording saved');
+  }catch(e){toast('Could not save the recording');}
+}
+function toggleRecord(){
+  if(recording){
+    if(recording.stopping) return;
+    const session=recording;session.stopping=true;setRecordingUI('stopping');
+    /* stop() changes state to inactive before its final data/stop events. */
+    if(session.rec.state!=='inactive'){
+      try{session.rec.stop();}catch(e){session.failed=true;finishRecording(session);}
+    }
+    return;
+  }
+  if(!window.MediaRecorder||!canvas.captureStream){toast('Recording is not supported in this browser');return;}
+  let mime='';
+  try{
+    if(typeof MediaRecorder.isTypeSupported==='function')
+      mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm','video/mp4'].find(type=>MediaRecorder.isTypeSupported(type))||'';
+  }catch(e){}
+  let stream,rec;
+  try{stream=canvas.captureStream(60);}catch(e){toast('Recording failed to start');return;}
+  try{
+    const options={videoBitsPerSecond:8000000};if(mime) options.mimeType=mime;
+    try{rec=new MediaRecorder(stream,options);}catch(e){rec=new MediaRecorder(stream);}
+  }catch(e){stopCaptureTracks(stream);toast('Recording failed to start');return;}
+  const session={rec,stream,mime,chunks:[],stopping:false,finished:false,failed:false,errorTimer:0};
+  recording=session;
+  rec.ondataavailable=ev=>{if(!session.finished&&ev.data&&ev.data.size) session.chunks.push(ev.data);};
+  rec.onstop=()=>finishRecording(session);
+  rec.onerror=()=>{
+    if(session.finished) return;
+    session.failed=true;
+    if(!session.stopping){
+      session.stopping=true;setRecordingUI('stopping');
+      if(rec.state!=='inactive') try{rec.stop();}catch(e){finishRecording(session);}
+    }
+    stopCaptureTracks(stream);
+    /* A conforming recorder sends its final data and stop events after an
+       error; recover the UI even if a broken implementation never does. */
+    if(!session.finished&&!session.errorTimer) session.errorTimer=setTimeout(()=>finishRecording(session),5000);
+  };
+  try{rec.start(250);}catch(e){
+    session.finished=true;clearTimeout(session.errorTimer);recording=null;stopCaptureTracks(stream);setRecordingUI('idle');toast('Recording failed to start');return;
+  }
+  if(!session.stopping&&!session.finished){setRecordingUI('recording');toast('Recording…');}
+}
+setRecordingUI('idle');
 function setDock(show){
   $('dock').classList.toggle('hidden',!show); $('fab').classList.toggle('show',!show);
   if(show) setTimeout(moveChipInd,50);

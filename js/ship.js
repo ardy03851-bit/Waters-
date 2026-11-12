@@ -254,6 +254,16 @@ function ensureShip(){
 function shipPlacementOK(x,z,heading=ship.heading){
   if(!islands.active) return true;
   const fx=Math.sin(heading),fz=-Math.cos(heading),rx=Math.cos(heading),rz=Math.sin(heading);
+  /* Reject only when the rotated footprint cannot overlap any sampled
+     heightfield square. The small margin is conservative at mesh edges; near
+     shore, the original 65-point test remains authoritative. */
+  const reachX=12*Math.abs(fx)+3*Math.abs(rx)+0.01,reachZ=12*Math.abs(fz)+3*Math.abs(rz)+0.01;
+  let near=islands.land.length===0;
+  for(const I of islands.land){
+    if(!Number.isFinite(I.x+I.z+I.extent)||
+       (Math.abs(x-I.x)<=I.extent+reachX&&Math.abs(z-I.z)<=I.extent+reachZ)){near=true;break;}
+  }
+  if(!near) return true;
   for(let lx=-12;lx<=12;lx+=2) for(const lz of [-3,-1.5,0,1.5,3])
     if(islandGround(x+fx*lx+rx*lz,z+fz*lx+rz*lz)>-2.3) return false;
   return true;
@@ -418,13 +428,13 @@ function updateShip(dt,sdt){
 }
 Hooks.on('frame',updateShip);
 
-function drawShip(mode,mirror){
+function drawShip(mode,mirror,submerge=cameraSubmerge()){
   if(!ship.enabled||ship.status!=='ready') return;
   gl.useProgram(pShip); setSky(pShip);
   gl.uniformMatrix4fv(L(pShip,'uVP'),false,VP); gl.uniformMatrix4fv(L(pShip,'uModel'),false,ship.matrix);
   gl.uniform3f(L(pShip,'uCamEff'),eye[0],mirror?-eye[1]:eye[1],eye[2]);
   gl.uniform1f(L(pShip,'uMirror'),mirror); gl.uniform1f(L(pShip,'uMode'),mode);
-  gl.uniform1f(L(pShip,'uUnderwater'),cameraSubmerge());
+  gl.uniform1f(L(pShip,'uUnderwater'),submerge);
   gl.uniform1f(L(pShip,'uWind'),clamp(envS.wind/20,0,1.4));
   gl.uniform1i(L(pShip,'uAlbedo'),6); gl.uniform1i(L(pShip,'uNormalMap'),7); gl.uniform1i(L(pShip,'uMaterial'),8);
   for(let i=0;i<ship.meshes.length;i++){
@@ -466,6 +476,11 @@ function rememberShipMotion(){
    and decorative rigging are visual, not a full rigid-body collider. */
 function collideShip(b,dt){
   if(!ship.enabled||ship.status!=='ready'||!ship.poseReady) return;
+  /* A rigid rotation preserves distance. This enclosing sphere is larger
+     than the complete local contact box (10.5 × 7 × 2.7 m), even at its
+     corners, so remote balls need no matrix transform or deck lookup. */
+  const m=ship.matrix,dx=b.x-m[12],dy=b.y-m[13],dz=b.z-m[14];
+  if(dx*dx+dy*dy+dz*dz>13.1*13.1) return;
   const p=shipLocal(b.x,b.y,b.z);
   if(Math.abs(p[0])>10.5||Math.abs(p[2])>2.7||p[1]<0.5||p[1]>7) return;
   const floor=shipDeckAt(p[0],p[2],p[1]-b.r+0.15);

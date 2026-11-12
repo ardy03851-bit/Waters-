@@ -8,8 +8,11 @@
    ============================================================ */
 const explore={active:false,mode:'swim',pos:[0,1,7],local:[0,1.7,0],yaw:0,pitch:-0.02,
   helmView:'chase',chaseYaw:-0.45,chasePitch:0.30,
-  velocity:[0,0,0],keys:new Set(),touchKeys:new Map(),speed:1,sensitivity:1,foamClock:0,lastStatus:''};
+  velocity:[0,0,0],keys:new Set(),touchKeys:new Map(),speed:1,sensitivity:1,foamClock:0,lastStatus:'',lastControls:''};
 const EXPLORE_KEYS=new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' ','shift','e','b']);
+const exploreButtons=document.querySelectorAll('[data-swim]');
+const EXPLORE_LABELS={w:'Move forward',s:'Move backward',a:'Move left',d:'Move right'};
+const HELM_LABELS={w:'Raise sail',s:'Ease sail',a:'Steer left',d:'Steer right'};
 let helmRequest=0;
 function clearExploreInput(){
   explore.keys.clear();explore.touchKeys.clear();
@@ -160,31 +163,26 @@ function boardOrLeave(){
 }
 function updateExploreHUD(){
   if(!explore.active) return;
-  const h=surfH(explore.pos[0],explore.pos[2],simT),depth=Math.max(0,h-explore.pos[1]);
+  /* Depth is only displayed while swimming; do not resample the sea at the
+     helm or on shore/deck. The controls themselves change only with mode. */
+  const depth=explore.mode==='swim'&&ship.status!=='loading'&&ship.status!=='error'?
+    Math.max(0,surfH(explore.pos[0],explore.pos[2],simT)-explore.pos[1]):0;
   const status=ship.status==='loading'?'Loading ship…':ship.status==='error'?'Ship unavailable · retry with Board':
     explore.mode==='helm'?'At the helm':explore.mode==='deck'?'On deck':explore.mode==='shore'?'On shore':
     depth>0.4?'Swimming · '+depth.toFixed(1)+' m deep':'Swimming';
   if(status!==explore.lastStatus){$('exploreStatus').textContent=status;explore.lastStatus=status;}
-  const b=$('bBoard'),helm=$('bHelm'),atHelm=explore.mode==='helm',onDeck=explore.mode==='deck';
-  const label=onDeck?'Leave deck':'Board';
-  b.hidden=atHelm;
-  if(b.textContent!==label) b.textContent=label;
+  const atHelm=explore.mode==='helm',onDeck=explore.mode==='deck',controls=atHelm?'helm':onDeck?'deck':'water';
+  if(controls===explore.lastControls) return;
+  explore.lastControls=controls;
+  const b=$('bBoard'),helm=$('bHelm');
+  b.hidden=atHelm;b.textContent=onDeck?'Leave deck':'Board';
   b.title=onDeck?'Return to the water (E)':'Board the ship when alongside (E)';
-  helm.hidden=!atHelm&&!onDeck;
-  const helmLabel=atHelm?'Leave helm':'Take helm';
-  if(helm.textContent!==helmLabel) helm.textContent=helmLabel;
+  helm.hidden=!atHelm&&!onDeck;helm.textContent=atHelm?'Leave helm':'Take helm';
   helm.title=atHelm?'Step onto the open deck (E or B)':'Take the helm (B)';
-  const help=atHelm?'W/S sail · A/D steer · Space anchor':onDeck?'WASD · drag to look · B helm · E leave':'WASD · drag to look · Space rise · Shift dive · E board';
-  if($('exploreHelp').textContent!==help) $('exploreHelp').textContent=help;
-  const mobile=$('exploreMobileHelp');
-  const mobileHelp=atHelm||onDeck?'Drag to look':'Drag to look · arrows move';
-  if(mobile.textContent!==mobileHelp) mobile.textContent=mobileHelp;
-  for(const button of document.querySelectorAll('[data-swim]')){
-    const names=atHelm?{w:'Raise sail',s:'Ease sail',a:'Steer left',d:'Steer right'}:
-      {w:'Move forward',s:'Move backward',a:'Move left',d:'Move right'};
-    if(names[button.dataset.swim]&&button.getAttribute('aria-label')!==names[button.dataset.swim])
-      button.setAttribute('aria-label',names[button.dataset.swim]);
-  }
+  $('exploreHelp').textContent=atHelm?'W/S sail · A/D steer · Space anchor':onDeck?'WASD · drag to look · B helm · E leave':'WASD · drag to look · Space rise · Shift dive · E board';
+  $('exploreMobileHelp').textContent=atHelm||onDeck?'Drag to look':'Drag to look · arrows move';
+  const names=atHelm?HELM_LABELS:EXPLORE_LABELS;
+  for(const button of exploreButtons) if(names[button.dataset.swim]) button.setAttribute('aria-label',names[button.dataset.swim]);
 }
 function updateExplore(dt){
   if(!explore.active) return;
@@ -317,7 +315,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden) clearExplo
 $('bBoard').addEventListener('click',boardOrLeave);
 $('bHelm').addEventListener('click',toggleHelm);
 $('bExitExplore').addEventListener('click',exitExplore);
-for(const button of document.querySelectorAll('[data-swim]')){
+for(const button of exploreButtons){
   const end=e=>{explore.touchKeys.delete(e.pointerId);button.classList.remove('held');};
   button.addEventListener('pointerdown',e=>{
     if(!explore.active) return;

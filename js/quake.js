@@ -24,6 +24,8 @@ function seaQuakeHeight(x,z,t){
   return p[3]*Math.exp(-d*d*0.12)*Math.sin(d*1.7);
 }
 function seaQuakeVelocity(x,z,t){return (seaQuakeHeight(x,z,t+0.02)-seaQuakeHeight(x,z,t-0.02))/0.04;}
+/* The envelope, Gaussian and sine all have magnitude at most one. */
+function seaQuakeHeightBound(){return quake.sea?0.55*Math.abs(quake.sea.strength):0;}
 function setQuakeUniform(p){
   const v=seaQuakeParameters(simT);
   gl.uniform4f(L(p,'uSeaQuake'),v[0],v[1],v[2],v[3]);

@@ -104,12 +104,14 @@ function setWaveSeed(seed){
   }
 }
 setWaveSeed(Math.floor(Math.random()*4294967296));
-let waveA0=0.3;
+let waveA0=0.3,waveHeightBound=0;
 function updateWaves(s){
+  waveHeightBound=0;
   for(let i=0;i<8;i++){
     const w=wv[i], a=windAng+WOFF[i];
     w.dx=Math.sin(a); w.dz=Math.cos(a);
     w.A=w.L*0.014*(0.25+1.25*s);
+    waveHeightBound+=Math.abs(w.A);
     w.q=0.085*(0.35+0.65*s); w.qk=w.q/w.k;
     uWArr[i*4]=w.dx;uWArr[i*4+1]=w.dz;uWArr[i*4+2]=w.k;uWArr[i*4+3]=w.A; uQArr[i]=w.q;
   }
@@ -165,7 +167,11 @@ const cellSz=2*RR/RN, RC2=Math.pow(1.8/120/cellSz,2);
 /* Hard limits. Whatever is thrown at the water, the interactive layer can never
    rise above RIP_MAX, and anything non-finite is flushed to flat water.        */
 const RIP_MAX=0.5, RIP_SOFT=0.34;
+/* The texture is initialized flat. Re-upload only after the simulation or a
+   disturbance changes its data, including edits made while paused. */
+let rippleDirty=false;
 function rippleStep(){
+  rippleDirty=true;
   for(let y=1;y<RN-1;y++){
     let i=y*RN+1;
     for(let x=1;x<RN-1;x++,i++){
@@ -188,6 +194,7 @@ function rippleStep(){
    each physics step and the water kept accelerating upwards until it broke.)   */
 function ripAdd(i,d){
   if(!(d===d)) return;
+  rippleDirty=true;
   let v=cur[i]+d; v=v>RIP_MAX?RIP_MAX:v<-RIP_MAX?-RIP_MAX:v;
   const applied=v-cur[i]; cur[i]=v;
   let pv=prv[i]+applied; prv[i]=pv>RIP_MAX?RIP_MAX:pv<-RIP_MAX?-RIP_MAX:pv;
@@ -208,6 +215,7 @@ function addFoam(wx,wz,rad,amt){
   const gx=(wx/(2*RR)+0.5)*RN-0.5,gz=(wz/(2*RR)+0.5)*RN-0.5,rc=rad/cellSz;
   const x0=Math.max(1,Math.floor(gx-rc)),x1=Math.min(RN-2,Math.ceil(gx+rc));
   const z0=Math.max(1,Math.floor(gz-rc)),z1=Math.min(RN-2,Math.ceil(gz+rc));
+  if(x0<=x1&&z0<=z1) rippleDirty=true;
   const r2=rc*rc;
   for(let zi=z0;zi<=z1;zi++)for(let xi=x0;xi<=x1;xi++){
     const dx=xi-gx,dz=zi-gz,d2=(dx*dx+dz*dz)/r2; if(d2>=1)continue;
@@ -225,7 +233,7 @@ function addRing(wx,wz,rad,wid,amt){
     ripAdd(zi*RN+xi,amt*Math.exp(-q*q*1.4));
   }
 }
-function resetRipples(){ rA.fill(0); rB.fill(0); foamArr.fill(0); }
+function resetRipples(){ rA.fill(0); rB.fill(0); foamArr.fill(0); rippleDirty=true; }
 const texRip=gl.createTexture();
 gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D,texRip);
 gl.texImage2D(gl.TEXTURE_2D,0,gl.RG16F,RN,RN,0,gl.RG,gl.FLOAT,ripData);
@@ -234,9 +242,11 @@ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
 function uploadRipple(){
+  if(!rippleDirty) return;
   for(let i=0;i<RN*RN;i++){ ripData[i*2]=cur[i]; ripData[i*2+1]=foamArr[i]; }
   gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D,texRip);
   gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,RN,RN,gl.RG,gl.FLOAT,ripData);
+  rippleDirty=false;
 }
 
 /* ============================================================
