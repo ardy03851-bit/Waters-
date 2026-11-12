@@ -1,10 +1,10 @@
 'use strict';
 /* ============================================================
-   A moored sailing ship
+   A sailing ship
 
    Dutch Ship Medium is kept locally as three indexed meshes and 1K PBR
    maps. It is loaded only when requested; a failure is isolated from the
-   ocean renderer. The hull, camera, deck samples and balls share one pose.
+   ocean renderer. The hull, helm, camera, deck and balls share one pose.
    ============================================================ */
 const SHIP_VS=HDR+`
 layout(location=0) in vec3 aPos;
@@ -88,8 +88,11 @@ void main(){
 }`;
 const pShip=program(SHIP_VS,SHIP_FS,'ship'),pShipMotion=program(SHIP_MOTION_VS,SHIP_MOTION_FS,'ship motion');
 const SHIP_ASSET='assets/ship/';
-const ship={enabled:false,status:'idle',error:'',x:0,z:0,y:0,roll:0,pitch:0,poseReady:false,
-  matrix:new Float32Array(16),meshes:[],textures:[],buffers:[],grid:null,load:null,foamClock:0,motionPrev:null,prevTime:0};
+/* Heading is clockwise from north; the model's bow is its local +X axis. */
+const SHIP_LIMIT=180;
+const ship={enabled:false,status:'idle',error:'',x:0,z:0,y:0,roll:0,pitch:0,heading:Math.PI/2,poseReady:false,
+  speed:0,throttle:0,anchored:true,vx:0,vy:0,vz:0,turnRate:0,travelled:0,relocated:false,warningTime:-10,
+  matrix:new Float32Array(16),meshes:[],textures:[],buffers:[],grid:null,load:null,foamClock:0,wakeClock:0,motionPrev:null,prevTime:0};
 const SHIP_GRID={minX:-11,minZ:-3.5,cell:0.5,width:48,height:14};
 
 /* A compact broad-phase for horizontal deck triangles. This is deliberately
@@ -246,12 +249,13 @@ function ensureShip(){
   ship.load=loadShip(); return ship.load;
 }
 
-/* Keep the hull and its eight-metre rig clear of dry ground. Search a stable
-   grid around the original play area; island regeneration can relocate it. */
-function shipPlacementOK(x,z){
+/* Test the whole rotated footprint, not only the centre or an axis-aligned
+   bounding box. Small movement steps keep the boat from tunnelling ashore. */
+function shipPlacementOK(x,z,heading=ship.heading){
   if(!islands.active) return true;
-  for(let dx=-10;dx<=10;dx+=2) for(const dz of [-3,-1.5,0,1.5,3])
-    if(islandGround(x+dx,z+dz)>-2.3) return false;
+  const fx=Math.sin(heading),fz=-Math.cos(heading),rx=Math.cos(heading),rz=Math.sin(heading);
+  for(let lx=-12;lx<=12;lx+=2) for(const lz of [-3,-1.5,0,1.5,3])
+    if(islandGround(x+fx*lx+rx*lz,z+fz*lx+rz*lz)>-2.3) return false;
   return true;
 }
 function relocateShip(){
@@ -265,19 +269,36 @@ function relocateShip(){
     }
   }
   if(!found){ ship.x=0; ship.z=105; }
-  ship.poseReady=false;
+  ship.poseReady=false;ship.speed=ship.throttle=ship.vx=ship.vy=ship.vz=ship.turnRate=0;
+  ship.anchored=true;ship.relocated=true;ship.travelled=0;
   if(typeof onShipRelocated==='function') onShipRelocated(ship.x-oldX,ship.z-oldZ);
   return true;
 }
 function onIslandsChanged(){
   if(typeof clearIslandQuake==='function') clearIslandQuake();
+  if(typeof onVoyageIslandsChanged==='function') onVoyageIslandsChanged();
   if(!ship.enabled) return;
-  if(!islands.active&&(ship.x!==0||ship.z!==0)){
-    const dx=-ship.x,dz=-ship.z;ship.x=0;ship.z=0;ship.poseReady=false;
+  /* Undo an automatic placement only if the user has not sailed away from it. */
+  if(!islands.active&&ship.relocated&&ship.travelled<0.5){
+    const dx=-ship.x,dz=-ship.z;ship.x=0;ship.z=0;ship.poseReady=false;ship.relocated=false;
     if(typeof onShipRelocated==='function') onShipRelocated(dx,dz);
-  }else relocateShip();
+  }else if(islands.active) relocateShip();
+}
+function setShipAnchor(on){
+  ship.anchored=!!on;
+  if(ship.anchored){
+    ship.throttle=0;
+    if(typeof stopVoyagePilot==='function') stopVoyagePilot();
+  }
 }
 function setShipEnabled(on){
+  if(!on&&ship.enabled){
+    /* Balls carried beyond the original sandbox need time to drift home when
+       the ship disappears, just as they do when distant islands are removed. */
+    for(const b of balls){
+      if(Math.hypot(b.x-ship.x,b.z-ship.z)<32&&Math.hypot(b.x,b.z)>(islands.active?140:28)) b.shipRecovery=true;
+    }
+  }
   ship.enabled=!!on;
   ship.motionPrev=null; havePrev=false;
   if(on){
@@ -285,7 +306,9 @@ function setShipEnabled(on){
     ensureShip();
   }else{
     if(typeof exitExplore==='function') exitExplore();
-    ship.foamClock=0;
+    setShipAnchor(true);ship.speed=ship.vx=ship.vy=ship.vz=ship.turnRate=0;
+    if(typeof onShipDisabled==='function') onShipDisabled();
+    ship.foamClock=ship.wakeClock=0;
     /* Do not retain the nine GPU textures after the ship is hidden. If a
        request is already in flight, loadShip releases it on completion. */
     if(ship.status==='ready'){releaseShipResources();ship.status='idle';}
@@ -301,30 +324,95 @@ function shipLocal(x,y,z){
 }
 function shipMatrix(){
   const cx=Math.cos(ship.roll),sx=Math.sin(ship.roll),cz=Math.cos(ship.pitch),sz=Math.sin(ship.pitch),m=ship.matrix;
-  m.set([cz,sz,0,0,-sz*cx,cz*cx,sx,0,sz*sx,-cz*sx,cx,0,ship.x,ship.y,ship.z,1]);
+  const fx=Math.sin(ship.heading),fz=-Math.cos(ship.heading),rx=Math.cos(ship.heading),rz=Math.sin(ship.heading);
+  m.set([cz*fx,sz,cz*fz,0,
+    -sz*cx*fx+sx*rx,cz*cx,-sz*cx*fz+sx*rz,0,
+    sz*sx*fx+cx*rx,-cz*sx,sz*sx*fz+cx*rz,0,ship.x,ship.y,ship.z,1]);
 }
 const shipWave={h:0,vx:0,vy:0,vz:0,ax:0,az:0};
 function shipHeight(x,z){waveSample(x,z,simT,false,shipWave);return shipWave.h;}
+function shipWarning(message){
+  if(simT-ship.warningTime<3) return;
+  ship.warningTime=simT;
+  if(typeof toast==='function') toast(message);
+}
 function updateShip(dt,sdt){
   if(!ship.enabled) return;
-  const h0=shipHeight(ship.x,ship.z),fore=shipHeight(ship.x+6,ship.z),aft=shipHeight(ship.x-6,ship.z),
-    port=shipHeight(ship.x,ship.z+2.2),star=shipHeight(ship.x,ship.z-2.2);
+  let fx=Math.sin(ship.heading),fz=-Math.cos(ship.heading),rx=Math.cos(ship.heading),rz=Math.sin(ship.heading);
+  if(sdt>0&&ship.status==='ready'){
+    const atHelm=typeof explore!=='undefined'&&explore.active&&explore.mode==='helm';
+    let power=0,steer=0;
+    if(atHelm&&typeof explorePressed==='function'){
+      power=(explorePressed('w')||explorePressed('arrowup')?1:0)-(explorePressed('s')||explorePressed('arrowdown')?1:0);
+      steer=(explorePressed('d')||explorePressed('arrowright')?1:0)-(explorePressed('a')||explorePressed('arrowleft')?1:0);
+      if(power>0&&ship.anchored) ship.anchored=false;
+      if(!ship.anchored) ship.throttle=clamp(ship.throttle+power*sdt*0.55,0,1);
+    }
+    if((steer||power)&&typeof stopVoyagePilot==='function') stopVoyagePilot();
+    else if(!steer&&typeof voyageSteering==='function') steer=voyageSteering();
+    const wind=typeof envS==='undefined'?8:clamp(envS.wind,0,28);
+    const windDirection=typeof windAng==='undefined'?0:windAng;
+    const windAlong=fx*Math.sin(windDirection)+fz*Math.cos(windDirection);
+    const windFactor=0.82+0.18*Math.abs(windAlong);
+    /* A forgiving, wind-assisted sailing model: without wind the vessel
+       gradually coasts to a stop rather than sailing under invisible power. */
+    const target=ship.anchored?0:ship.throttle*(2.0+wind*0.16)*windFactor*clamp(wind/4,0,1);
+    ship.speed+=(target-ship.speed)*(1-Math.exp(-sdt*(ship.anchored?2.8:0.7)));
+    if(ship.speed<0.005) ship.speed=0;
+    const turn=ship.anchored?0:steer*(0.18+0.30*clamp(ship.speed/3,0,1))*sdt;
+    let nextHeading=ship.heading+turn;
+    if(turn&&!shipPlacementOK(ship.x,ship.z,nextHeading)){
+      nextHeading=ship.heading;shipWarning('Too close to shore to turn that way');
+    }
+    const dh=nextHeading-ship.heading;
+    const nfx=Math.sin(nextHeading),nfz=-Math.cos(nextHeading);
+    const dx=nfx*ship.speed*sdt,dz=nfz*ship.speed*sdt,nx=ship.x+dx,nz=ship.z+dz;
+    if(dx===0&&dz===0){ship.vx=ship.vz=0;}
+    else if(Math.hypot(nx,nz)<=SHIP_LIMIT&&shipPlacementOK(nx,nz,nextHeading)){
+      ship.x=nx;ship.z=nz;ship.travelled+=Math.hypot(dx,dz);
+      ship.vx=dx/sdt;ship.vz=dz/sdt;
+    }else{
+      ship.speed=ship.throttle=ship.vx=ship.vz=0;
+      if(typeof stopVoyagePilot==='function') stopVoyagePilot();
+      shipWarning(Math.hypot(nx,nz)>SHIP_LIMIT?'Edge of the sailing area · turn back':'Shallow water ahead · turn to open sea');
+    }
+    ship.heading=nextHeading;ship.turnRate=dh/sdt;
+    if(dh&&typeof onShipTurned==='function') onShipTurned(dh);
+    fx=nfx;fz=nfz;rx=Math.cos(ship.heading);rz=Math.sin(ship.heading);
+  }else if(sdt<=0){ship.vx=ship.vz=ship.turnRate=0;}
+  const h0=shipHeight(ship.x,ship.z),fore=shipHeight(ship.x+fx*6,ship.z+fz*6),aft=shipHeight(ship.x-fx*6,ship.z-fz*6),
+    port=shipHeight(ship.x+rx*2.2,ship.z+rz*2.2),star=shipHeight(ship.x-rx*2.2,ship.z-rz*2.2);
   const pitch=clamp(Math.atan2(fore-aft,12),-0.12,0.12),roll=clamp(-Math.atan2(port-star,4.4),-0.14,0.14);
+  const oldY=ship.y,hadPose=ship.poseReady;
   if(!ship.poseReady){ship.y=h0;ship.pitch=pitch;ship.roll=roll;ship.poseReady=true;}
   else if(sdt>0){
     const k=1-Math.exp(-sdt*2.3),kr=1-Math.exp(-sdt*1.6);
     ship.y+=(h0-ship.y)*k; ship.pitch+=(pitch-ship.pitch)*kr; ship.roll+=(roll-ship.roll)*kr;
   }
+  ship.vy=hadPose&&sdt>0?(ship.y-oldY)/sdt:0;
   shipMatrix();
   if(sdt>0&&ship.status==='ready'){
     ship.foamClock-=sdt;
     if(ship.foamClock<=0){
       ship.foamClock=lerp(1.5,0.55,clamp(sea,0,1));
-      const side=Math.random()<0.5?-1:1,x=ship.x+(Math.random()-0.5)*15,z=ship.z+side*2.5;
-      putSurf(coastFoam,MAX_COAST_FOAM,{x,y:surfH(x,z,simT),z,width:1.6+sea,nx:0,nz:side,power:0.25+sea*0.6,kind:0,
+      const side=Math.random()<0.5?-1:1,along=(Math.random()-0.5)*15;
+      const x=ship.x+fx*along+rx*side*2.5,z=ship.z+fz*along+rz*side*2.5;
+      putSurf(coastFoam,MAX_COAST_FOAM,{x,y:surfH(x,z,simT),z,width:1.6+sea,nx:rx*side,nz:rz*side,power:0.25+sea*0.6,kind:0,
         age:0,life:1.8+sea,seed:Math.random(),layer:0});
       addFoam(x,z,0.8,0.10+sea*0.13);
       if(sea>0.70&&Math.random()<0.3) crownSurfSheet(x,surfH(x,z,simT),z,0.25,2.3+sea*2);
+    }
+    if(ship.speed>0.55){
+      ship.wakeClock-=sdt;
+      if(ship.wakeClock<=0){
+        ship.wakeClock=clamp(0.6-ship.speed*0.07,0.22,0.56);
+        for(const side of [-1,1]){
+          const x=ship.x-fx*8+rx*side*1.2,z=ship.z-fz*8+rz*side*1.2;
+          putSurf(coastFoam,MAX_COAST_FOAM,{x,y:surfH(x,z,simT),z,width:1.8+ship.speed*0.22,
+            nx:-fx*0.75+rx*side*0.66,nz:-fz*0.75+rz*side*0.66,power:clamp(ship.speed/4,0.2,1),kind:0,
+            age:0,life:3.4,seed:Math.random(),layer:0});
+        }
+      }
     }
   }
 }
@@ -384,10 +472,14 @@ function collideShip(b,dt){
   if(floor===null||p[1]-b.r>floor||p[1]<floor-0.2) return;
   const target=shipPoint(p[0],floor+b.r,p[2]);
   b.x=target[0];b.y=target[1];b.z=target[2];
-  if(b.vy<0){
-    if(b.type===6&&b.vy<-4.2){waterBalloonBurst(b,-b.vy);b.dead=true;return;}
-    if(b.vy<-2&&typeof audioKnock==='function') audioKnock(-b.vy*0.6);
-    b.vy=-b.vy*Math.min(0.55,b.e*bounceMul*0.55);
+  const relativeVy=b.vy-ship.vy;
+  if(relativeVy<0){
+    if(b.type===6&&relativeVy<-4.2){waterBalloonBurst(b,-relativeVy);b.dead=true;return;}
+    if(relativeVy<-2&&typeof audioKnock==='function') audioKnock(-relativeVy*0.6);
+    b.vy=ship.vy-relativeVy*Math.min(0.55,b.e*bounceMul*0.55);
   }
-  const friction=Math.min(1,dt*3); b.vx*=1-friction; b.vz*=1-friction;
+  /* Deck friction approaches the moving hull velocity, including a turn. */
+  const friction=Math.min(1,dt*30),fx=Math.sin(ship.heading),fz=-Math.cos(ship.heading),rx=Math.cos(ship.heading),rz=Math.sin(ship.heading);
+  const vx=ship.vx+ship.turnRate*(p[0]*rx-p[2]*fx),vz=ship.vz+ship.turnRate*(p[0]*rz-p[2]*fz);
+  b.vx+=(vx-b.vx)*friction; b.vz+=(vz-b.vz)*friction;
 }

@@ -26,7 +26,7 @@ const Hooks={
 };
 
 window.Aqua={
-  version:'1.2.0',
+  version:'1.3.0',
   hooks:Hooks,
   /* live view of the simulated balls */
   get balls(){ return balls; },
@@ -40,6 +40,7 @@ window.Aqua={
   time(h){ userSet('hour',h); },
   ship(on){ userSet('ship',on===undefined?!ship.enabled:!!on); },
   explore(on){ if(on===undefined) toggleExplore(); else if(on) enterExplore(); else exitExplore(); },
+  sail(){ enterSailing(); },
   quake(kind){ return kind==='island'?triggerIslandQuake():triggerSeaQuake(); },
   /* cinema mode & video recording, same as the UI buttons */
   cinema(on){ setCinema(on===undefined?!document.body.classList.contains('cinema'):on); },

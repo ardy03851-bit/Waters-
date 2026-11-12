@@ -209,11 +209,11 @@ function assertFrame(f){assert.equal(f.state,'running',f.detail);assert.equal(f.
       await page.locator('#bBoard').tap();assert.equal(await page.evaluate(()=>explore.mode),'deck');
       await page.setViewportSize({width:844,height:390});assertFrame(await frame(page));
       const layout=await page.evaluate(()=>{
-        const brand=document.querySelector('.brand').getBoundingClientRect(),stats=document.querySelector('#stats').getBoundingClientRect();
+        const conditions=document.querySelector('#cond').getBoundingClientRect(),stats=document.querySelector('#stats').getBoundingClientRect();
         const hud=document.querySelector('#exploreHUD').getBoundingClientRect();
-        return {brandRight:brand.right,hudLeft:hud.left,hudRight:hud.right,statsLeft:stats.left};
+        return {conditionsRight:conditions.right,hudLeft:hud.left,hudRight:hud.right,statsLeft:stats.left};
       });
-      assert.ok(layout.brandRight<=layout.hudLeft&&layout.hudRight<=layout.statsLeft,'the landscape controls do not overlap the header');
+      assert.ok(layout.conditionsRight<=layout.hudLeft&&layout.hudRight<=layout.statsLeft,'the landscape controls do not overlap the header');
       await page.locator('#bExitExplore').tap();
       assert.equal(await page.evaluate(()=>explore.active),false);
       assert.equal(await page.evaluate(()=>getComputedStyle(document.getElementById('exploreTouch')).display),'none');

@@ -7,47 +7,120 @@
    ship's actual sampled mesh and its floating pose.
    ============================================================ */
 const explore={active:false,mode:'swim',pos:[0,1,7],local:[0,1.7,0],yaw:0,pitch:-0.02,
+  helmView:'chase',chaseYaw:-0.45,chasePitch:0.30,
   velocity:[0,0,0],keys:new Set(),touchKeys:new Map(),speed:1,sensitivity:1,foamClock:0,lastStatus:''};
-const EXPLORE_KEYS=new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' ','shift','e']);
+const EXPLORE_KEYS=new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' ','shift','e','b']);
+let helmRequest=0;
+function clearExploreInput(){
+  explore.keys.clear();explore.touchKeys.clear();
+  document.querySelectorAll('[data-swim].held').forEach(button=>button.classList.remove('held'));
+}
 function explorePressed(key){
   if(explore.keys.has(key)) return true;
   for(const value of explore.touchKeys.values()) if(value===key) return true;
   return false;
 }
 function onShipRelocated(dx,dz){
+  if(typeof resetVoyageTrack==='function') resetVoyageTrack();
   if(!explore.active) return;
-  if(explore.mode!=='deck'){explore.pos[0]+=dx;explore.pos[2]+=dz;}
+  if(explore.mode!=='deck'&&explore.mode!=='helm'){explore.pos[0]+=dx;explore.pos[2]+=dz;}
   explore.velocity.fill(0); havePrev=false;
 }
-function enterExplore(){
+function onShipTurned(delta){
+  if(explore.active&&(explore.mode==='deck'||explore.mode==='helm')) explore.yaw+=delta;
+}
+function enterExplore(quiet=false){
   if(explore.active) return;
   if(typeof cinema!=='undefined'&&cinema) setCinema(false);
   if(!ship.enabled) userSet('ship',true);
   if(ship.status==='error') ensureShip();
   updateShip(0,0);
   releaseGrab(); ptrs.clear();
-  explore.active=true; explore.mode='swim'; explore.yaw=0; explore.pitch=0.13;
-  const x=ship.x,z=ship.z+14;
+  explore.active=true; explore.mode='swim'; explore.pitch=0.13;
+  /* Begin alongside the current side of the vessel, even after it has turned. */
+  const rx=Math.cos(ship.heading),rz=Math.sin(ship.heading),x=ship.x+rx*14,z=ship.z+rz*14;
+  explore.yaw=Math.atan2(-rx,rz);
   explore.pos=[x,surfH(x,z,simT)+0.82,z];
-  explore.velocity.fill(0); explore.keys.clear(); explore.touchKeys.clear(); explore.foamClock=0;
+  explore.velocity.fill(0); clearExploreInput(); explore.foamClock=0;
   document.body.classList.add('exploring');
   $('exploreHUD').setAttribute('aria-hidden','false');
   $('exploreTouch').setAttribute('aria-hidden','false');
   if(typeof setPanel==='function') setPanel(false);
   hideHint(); havePrev=false; canvas.focus({preventScroll:true});
-  if(typeof toast==='function') toast('Swim to the ship · board from alongside');
+  if(!quiet&&typeof toast==='function') toast('Swim to the ship · board from alongside');
   updateExploreHUD();
 }
 function exitExplore(){
   if(!explore.active) return;
-  explore.active=false; explore.keys.clear(); explore.touchKeys.clear(); explore.velocity.fill(0);
+  ++helmRequest;
+  explore.active=false;clearExploreInput();explore.velocity.fill(0);
+  setShipAnchor(true);
+  if(typeof closeVoyageChart==='function') closeVoyageChart(false);
   ptrs.clear(); canvas.style.cursor='grab';
-  document.body.classList.remove('exploring');
+  document.body.classList.remove('exploring','helming');
+  $('helmHUD').setAttribute('aria-hidden','true');
   $('exploreHUD').setAttribute('aria-hidden','true');
   $('exploreTouch').setAttribute('aria-hidden','true');
   havePrev=false; resetCamera();
 }
 function toggleExplore(){if(explore.active) exitExplore();else enterExplore();}
+/* Direct access makes sailing discoverable; boarding from the water and
+   walking the actual open deck remain available as a separate experience. */
+function enterSailing(){
+  if(!explore.active) enterExplore(true);
+  else if(typeof setPanel==='function'&&document.body.classList.contains('panel-open')) setPanel(false);
+  const request=++helmRequest;
+  if(ship.status==='ready'){takeHelm();return;}
+  updateExploreHUD();
+  ensureShip().then(ok=>{
+    if(request!==helmRequest||!explore.active||!ship.enabled) return;
+    if(ok) takeHelm();
+    else updateExploreHUD();
+  });
+}
+function takeHelm(){
+  if(!explore.active||!ship.enabled||ship.status!=='ready') return false;
+  let landing=null,best=-Infinity;
+  /* Prefer a clear viewpoint if the user's balls happen to be on the deck. */
+  for(const x of [-4,-3,-2,-1,1,2]) for(const z of [0.8,-0.8,1.25,-1.25]){
+    const h=shipDeckAt(x,z,1.75);if(h===null) continue;
+    const p=shipPoint(x,h+1.55,z);
+    let clearance=100;
+    for(const b of balls) clearance=Math.min(clearance,Math.hypot(p[0]-b.x,p[1]-b.y,p[2]-b.z)-b.r);
+    if(clearance>best){best=clearance;landing=[x,h,z];}
+  }
+  if(!landing){toast('No clear place to take the helm');return false;}
+  explore.local=landing;explore.mode='helm';explore.yaw=ship.heading;explore.pitch=0.04;
+  explore.helmView='chase';explore.chaseYaw=-0.45;explore.chasePitch=0.30;
+  explore.velocity.fill(0);clearExploreInput();updateShip(0,0);
+  explore.pos=shipPoint(landing[0],landing[1]+1.55,landing[2]);
+  document.body.classList.add('helming');$('helmHUD').setAttribute('aria-hidden','false');
+  havePrev=false;updateExploreHUD();
+  if(typeof updateHelmHUD==='function') updateHelmHUD();
+  canvas.focus({preventScroll:true});
+  toast(ship.anchored?'Raise sail to get underway':'At the helm');
+  return true;
+}
+function leaveHelm(){
+  if(!explore.active||explore.mode!=='helm') return;
+  explore.mode='deck';explore.velocity.fill(0);clearExploreInput();
+  document.body.classList.remove('helming');$('helmHUD').setAttribute('aria-hidden','true');
+  if(typeof closeVoyageChart==='function') closeVoyageChart(false);
+  havePrev=false;updateExploreHUD();canvas.focus({preventScroll:true});
+  toast(ship.speed>0.15?'On deck · the ship keeps its course':'On the open deck');
+}
+function toggleHelm(){
+  if(explore.mode==='helm') leaveHelm();
+  else if(explore.mode==='deck') takeHelm();
+  else enterSailing();
+}
+function toggleHelmView(){
+  if(!explore.active||explore.mode!=='helm') return;
+  explore.helmView=explore.helmView==='chase'?'deck':'chase';
+  havePrev=false;
+  if(typeof updateHelmHUD==='function') updateHelmHUD();
+  canvas.focus({preventScroll:true});
+}
 function findBoardingPoint(x,side){
   /* Board onto the open main deck, then use the mesh to climb its small steps.
      Choose a genuine floor instead of teleporting into an imagined interior. */
@@ -61,7 +134,9 @@ function findBoardingPoint(x,side){
 }
 function boardOrLeave(){
   if(!explore.active) return false;
+  if(explore.mode==='helm'){leaveHelm();return true;}
   if(explore.mode==='deck'){
+    setShipAnchor(true);
     const side=explore.local[2]>=0?1:-1, p=shipPoint(clamp(explore.local[0],-8,8),0,side*4.0);
     explore.pos=[p[0],surfH(p[0],p[2],simT)+0.75,p[2]];
     explore.mode='swim';explore.velocity.fill(0);havePrev=false;updateExploreHUD();
@@ -79,7 +154,7 @@ function boardOrLeave(){
   }
   const landing=findBoardingPoint(p[0],p[2]>=0?1:-1);
   if(!landing){toast('No clear boarding point found');return false;}
-  explore.local=landing;explore.mode='deck';explore.yaw=landing[0]>=0?-Math.PI/2:Math.PI/2;explore.pitch=-0.08;explore.velocity.fill(0);
+  explore.local=landing;explore.mode='deck';explore.yaw=ship.heading+(landing[0]>=0?Math.PI:0);explore.pitch=-0.08;explore.velocity.fill(0);
   explore.pos=shipPoint(landing[0],landing[1]+1.55,landing[2]);
   havePrev=false;updateExploreHUD();canvas.focus({preventScroll:true});toast('On the open deck · E to leave');return true;
 }
@@ -87,17 +162,36 @@ function updateExploreHUD(){
   if(!explore.active) return;
   const h=surfH(explore.pos[0],explore.pos[2],simT),depth=Math.max(0,h-explore.pos[1]);
   const status=ship.status==='loading'?'Loading ship…':ship.status==='error'?'Ship unavailable · retry with Board':
-    explore.mode==='deck'?'On deck':explore.mode==='shore'?'On shore':
+    explore.mode==='helm'?'At the helm':explore.mode==='deck'?'On deck':explore.mode==='shore'?'On shore':
     depth>0.4?'Swimming · '+depth.toFixed(1)+' m deep':'Swimming';
   if(status!==explore.lastStatus){$('exploreStatus').textContent=status;explore.lastStatus=status;}
-  const b=$('bBoard'),label=explore.mode==='deck'?'Leave deck':'Board';
+  const b=$('bBoard'),helm=$('bHelm'),atHelm=explore.mode==='helm',onDeck=explore.mode==='deck';
+  const label=onDeck?'Leave deck':'Board';
+  b.hidden=atHelm;
   if(b.textContent!==label) b.textContent=label;
-  b.title=explore.mode==='deck'?'Return to the water (E)':'Board the ship when alongside (E)';
-  const help=explore.mode==='deck'?'WASD · drag to look · E leave deck':'WASD · drag to look · Space rise · Shift dive · E board';
+  b.title=onDeck?'Return to the water (E)':'Board the ship when alongside (E)';
+  helm.hidden=!atHelm&&!onDeck;
+  const helmLabel=atHelm?'Leave helm':'Take helm';
+  if(helm.textContent!==helmLabel) helm.textContent=helmLabel;
+  helm.title=atHelm?'Step onto the open deck (E or B)':'Take the helm (B)';
+  const help=atHelm?'W/S sail · A/D steer · Space anchor':onDeck?'WASD · drag to look · B helm · E leave':'WASD · drag to look · Space rise · Shift dive · E board';
   if($('exploreHelp').textContent!==help) $('exploreHelp').textContent=help;
+  const mobile=$('exploreMobileHelp');
+  const mobileHelp=atHelm||onDeck?'Drag to look':'Drag to look · arrows move';
+  if(mobile.textContent!==mobileHelp) mobile.textContent=mobileHelp;
+  for(const button of document.querySelectorAll('[data-swim]')){
+    const names=atHelm?{w:'Raise sail',s:'Ease sail',a:'Steer left',d:'Steer right'}:
+      {w:'Move forward',s:'Move backward',a:'Move left',d:'Move right'};
+    if(names[button.dataset.swim]&&button.getAttribute('aria-label')!==names[button.dataset.swim])
+      button.setAttribute('aria-label',names[button.dataset.swim]);
+  }
 }
 function updateExplore(dt){
   if(!explore.active) return;
+  if(explore.mode==='helm'){
+    if(ship.poseReady) explore.pos=shipPoint(explore.local[0],explore.local[1]+1.55,explore.local[2]);
+    updateExploreHUD();return;
+  }
   const forward=(explorePressed('w')||explorePressed('arrowup')?1:0)-(explorePressed('s')||explorePressed('arrowdown')?1:0);
   const right=(explorePressed('d')||explorePressed('arrowright')?1:0)-(explorePressed('a')||explorePressed('arrowleft')?1:0);
   const up=(explorePressed(' ')?1:0)-(explorePressed('shift')?1:0);
@@ -126,7 +220,10 @@ function updateExplore(dt){
   }else{
     let x=explore.pos[0]+v[0]*dt,z=explore.pos[2]+v[2]*dt,y=explore.pos[1]+v[1]*dt;
     const radial=Math.hypot(x,z);
-    if(radial>120){x*=120/radial;z*=120/radial;}
+    /* A swimmer who leaves the moving ship can still reach it at the edge
+       of the sailing area; do not teleport them back to the old 120 m limit. */
+    const limit=SHIP_LIMIT+20;
+    if(radial>limit){x*=limit/radial;z*=limit/radial;}
     /* A tapered hull keeps swimmers outside the visible sides; diving under
        the keel remains possible. Decorative ropes are not colliders. */
     if(ship.enabled&&ship.poseReady){
@@ -166,13 +263,31 @@ function updateExplore(dt){
   updateExploreHUD();
 }
 function computeExploreCamera(){
-  if(explore.mode==='deck'&&ship.poseReady) explore.pos=shipPoint(explore.local[0],explore.local[1]+1.55,explore.local[2]);
-  const shake=quakeCameraOffset(explore.pos[0],explore.pos[2]);
-  eye=[explore.pos[0]+shake[0],explore.pos[1]+shake[1],explore.pos[2]+shake[2]];
-  const sy=Math.sin(explore.yaw),cy=Math.cos(explore.yaw),sp=Math.sin(explore.pitch),cp=Math.cos(explore.pitch);
-  camF=[sy*cp,sp,-cy*cp];camR=[cy,0,sy];camU=[-sy*sp,cp,cy*sp];
+  if((explore.mode==='deck'||explore.mode==='helm')&&ship.poseReady)
+    explore.pos=shipPoint(explore.local[0],explore.local[1]+1.55,explore.local[2]);
+  let target;
+  if(explore.mode==='helm'&&explore.helmView==='chase'){
+    /* A follow camera stays attached to the sailing ship but can be orbited
+       independently with a drag. The deck view remains truly first person. */
+    const centre=shipPoint(0,5.2,0),a=ship.heading+explore.chaseYaw,cp=Math.cos(explore.chasePitch),distance=45;
+    eye=[centre[0]-Math.sin(a)*cp*distance,centre[1]+Math.sin(explore.chasePitch)*distance,
+      centre[2]+Math.cos(a)*cp*distance];
+    eye[1]=Math.max(eye[1],surfH(eye[0],eye[2],simT)+0.8,islands.active?islandGround(eye[0],eye[2])+1.2:-1000);
+    const shake=quakeCameraOffset(centre[0],centre[2]);
+    eye=[eye[0]+shake[0],eye[1]+shake[1],eye[2]+shake[2]];
+    target=[centre[0]+shake[0],centre[1]+shake[1],centre[2]+shake[2]];
+    let fx=target[0]-eye[0],fy=target[1]-eye[1],fz=target[2]-eye[2],len=Math.hypot(fx,fy,fz)||1;
+    fx/=len;fy/=len;fz/=len;camF=[fx,fy,fz];
+    len=Math.hypot(fx,fz)||1;camR=[-fz/len,0,fx/len];
+    camU=[-camR[2]*fy,camR[2]*fx-camR[0]*fz,camR[0]*fy];
+  }else{
+    const shake=quakeCameraOffset(explore.pos[0],explore.pos[2]);
+    eye=[explore.pos[0]+shake[0],explore.pos[1]+shake[1],explore.pos[2]+shake[2]];
+    const sy=Math.sin(explore.yaw),cy=Math.cos(explore.yaw),sp=Math.sin(explore.pitch),cp=Math.cos(explore.pitch);
+    camF=[sy*cp,sp,-cy*cp];camR=[cy,0,sy];camU=[-sy*sp,cp,cy*sp];
+    target=[eye[0]+camF[0],eye[1]+camF[1],eye[2]+camF[2]];
+  }
   aspect=canvas.width/canvas.height;tanH=Math.tan(fovDeg*Math.PI/360)*Math.max(1,1.15/aspect);
-  const target=[eye[0]+camF[0],eye[1]+camF[1],eye[2]+camF[2]];
   VP=M4.mul(M4.persp(2*Math.atan(tanH),aspect,0.1,3000),M4.look(eye,target,[0,1,0]));
 }
 function cameraSubmerge(){
@@ -180,17 +295,27 @@ function cameraSubmerge(){
 }
 function isTextTarget(target){return !!(target&&target.closest&&target.closest('input,textarea,select,button,[contenteditable="true"]'));}
 addEventListener('keydown',e=>{
-  if(!explore.active||e.metaKey||e.ctrlKey&&e.key!=='Control'||e.altKey||isTextTarget(e.target)) return;
+  if(!explore.active||e.metaKey||e.ctrlKey||e.altKey||isTextTarget(e.target)||
+    document.body.classList.contains('panel-open')||(typeof voyage!=='undefined'&&voyage.chartOpen)) return;
   const key=e.key.toLowerCase();
+  if(explore.mode==='helm'&&key==='v'){
+    e.preventDefault();if(!e.repeat) toggleHelmView();return;
+  }
   if(!EXPLORE_KEYS.has(key)) return;
   e.preventDefault();
   if(key==='e'){if(!e.repeat) boardOrLeave();return;}
+  if(key==='b'){if(!e.repeat) toggleHelm();return;}
+  if(key===' '&&explore.mode==='helm'){
+    if(!e.repeat&&typeof toggleShipAnchor==='function') toggleShipAnchor();
+    return;
+  }
   explore.keys.add(key);
 });
 addEventListener('keyup',e=>{explore.keys.delete(e.key.toLowerCase());});
-addEventListener('blur',()=>{explore.keys.clear();explore.touchKeys.clear();});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){explore.keys.clear();explore.touchKeys.clear();}});
+addEventListener('blur',clearExploreInput);
+document.addEventListener('visibilitychange',()=>{if(document.hidden) clearExploreInput();});
 $('bBoard').addEventListener('click',boardOrLeave);
+$('bHelm').addEventListener('click',toggleHelm);
 $('bExitExplore').addEventListener('click',exitExplore);
 for(const button of document.querySelectorAll('[data-swim]')){
   const end=e=>{explore.touchKeys.delete(e.pointerId);button.classList.remove('held');};

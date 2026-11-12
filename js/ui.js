@@ -70,9 +70,9 @@ const CONTROLS=[
   {tab:'scene',t:'scenes'},
   {tab:'scene',t:'toggle',k:'islands',label:'Island archipelago',sub:'Rocky cliffs, beaches and coastal forests'},
   {tab:'scene',t:'buttons',items:[['New islands',()=>newIslands()],['Storm coast',()=>islandStorm()]]},
-  {tab:'scene',t:'toggle',k:'ship',label:'Floating sailing ship',sub:'A detailed CC0 ship, moored in open water'},
-  {tab:'scene',t:'buttons',items:[['Swim & explore',()=>enterExplore()],['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
-  {tab:'scene',t:'note',text:'Board the open decks from alongside. The model has no explorable enclosed cabins. Quake controls are in Physics; coast controls are in Islands.'},
+  {tab:'scene',t:'toggle',k:'ship',label:'Sailing ship',sub:'A detailed ship to sail or explore'},
+  {tab:'scene',t:'buttons',items:[['Take the helm',()=>enterSailing()],['Swim & explore',()=>enterExplore()],['Seaquake',()=>triggerSeaQuake()],['Island quake',()=>triggerIslandQuake()]]},
+  {tab:'scene',t:'note',text:'Board the open main deck from alongside or go straight to the helm. The model has no explorable enclosed cabins. Quake controls are in Physics; coast controls are in Islands.'},
   {tab:'scene',t:'seg',k:'launch',label:'Tapping the sea',opts:[['drop','Drops a ball'],['throw','Throws a ball']]},
   {tab:'scene',t:'range',k:'throwSpeed',label:'Throw speed',min:4,max:32,step:1,fmt:v=>v+' m/s'},
   {tab:'scene',t:'range',k:'size',label:'Ball size',min:0.5,max:2.2,step:0.01,fmt:v=>v.toFixed(1)+'×',dock:true},
@@ -142,7 +142,7 @@ const CONTROLS=[
   {tab:'system',t:'toggle',k:'sound',label:'Sound',sub:'Sea, wind, rain, thunder and splashes'},
   {tab:'system',t:'range',k:'volume',label:'Volume',min:0,max:1,step:0.01,fmt:pct},
   {tab:'system',t:'buttons',items:[['Cinema mode',()=>setCinema(true)],['Record video',()=>toggleRecord(),'recBtn'],['Pause',()=>togglePause(),'pauseBtn'],['Screenshot',()=>takeShot()],['Fullscreen',()=>toggleFullscreen()],['Reset all',()=>resetAll()]]},
-  {tab:'system',t:'note',text:'Shortcuts: Space drop · I islands · U explore · Q seaquake · J island quake · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema · O orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
+  {tab:'system',t:'note',text:'Shortcuts: Space drop · B sail · I islands · U explore · Q seaquake · J island quake · R ball rain · S slow-mo · C clear · G settings · H hide dock · V cinema · O orbit · P pause · M sound · F fullscreen · K screenshot · 1–8 ball type'}
 ];
 const TABS=[['scene','Scene'],['islands','Islands'],['sky','Weather'],['physics','Physics'],['camera','Camera'],['system','System']];
 const CTL={}; CONTROLS.forEach(c=>{ if(c.k) CTL[c.k]=c; });
@@ -398,15 +398,19 @@ function showTab(id){
   tabBtns[id].scrollIntoView({behavior:reduceMotion?'auto':'smooth',inline:'nearest',block:'nearest'});
 }
 function setPanel(open,tab){
+  if(open&&typeof closeVoyageChart==='function') closeVoyageChart(false);
+  if(open&&explore.active) clearExploreInput();
   const p=$('panel'); p.classList.toggle('open',open); p.setAttribute('aria-hidden',open?'false':'true');
   document.body.classList.toggle('panel-open',open); $('bSet').classList.toggle('on',open);
   $('bSet').setAttribute('aria-expanded',open?'true':'false');
+  $('bExploreSettings').setAttribute('aria-expanded',open?'true':'false');
   $('cond').setAttribute('aria-expanded',open&&(!tab||tab==='sky')&&curTab==='sky'?'true':'false');
   if(open){ if($('dock').classList.contains('hidden')&&innerWidth>=900) setDock(true); showTab(tab||curTab); setTimeout(moveTabInd,80); hideHint(); }
   else if(explore.active) canvas.focus({preventScroll:true});
   setTimeout(moveChipInd,700);
 }
 $('bSet').onclick=()=>setPanel(!$('panel').classList.contains('open'));
+$('bExploreSettings').onclick=()=>setPanel(true);
 $('pClose').onclick=()=>setPanel(false);
 $('cond').onclick=()=>setPanel(!($('panel').classList.contains('open')&&curTab==='sky'),'sky');
 
@@ -462,11 +466,16 @@ function islandStorm(){
 function dropBall(){
   hideHint(); replay($('bDrop'),'fired');
   if(launchMode==='throw') spawnAtPointer(innerWidth/2,innerHeight*0.42);
-  else spawnBall((Math.random()-0.5)*3,4.5,(Math.random()-0.5)*3,selType);
+  else {
+    const x=(cameraFramesShip()?ship.x:0)+(Math.random()-0.5)*3,z=(cameraFramesShip()?ship.z:0)+(Math.random()-0.5)*3;
+    spawnBall(x,surfH(x,z,simT)+4.5,z,selType);
+  }
 }
 function ballRain(){
   hideHint(); toast('Ball rain incoming');
-  for(let i=0;i<10;i++) setTimeout(()=>spawnBall((Math.random()-0.5)*11,5+Math.random()*5,(Math.random()-0.5)*11,Math.floor(Math.random()*TYPES.length)),i*110);
+  const cx=cameraFramesShip()?ship.x:0,cz=cameraFramesShip()?ship.z:0;
+  for(let i=0;i<10;i++) setTimeout(()=>{const x=cx+(Math.random()-0.5)*11,z=cz+(Math.random()-0.5)*11;
+    spawnBall(x,surfH(x,z,simT)+5+Math.random()*5,z,Math.floor(Math.random()*TYPES.length));},i*110);
 }
 function clearAll(){ const n=balls.length; balls.length=0; grab=null; clearSplashes(); replay($('bClear'),'fired'); toast(n?'Cleared '+n+' ball'+(n>1?'s':''):'Nothing to clear'); }
 function toggleSlow(){
@@ -547,6 +556,7 @@ function setDock(show){
 $('bDrop').onclick=dropBall;
 $('bIsland').onclick=toggleIslands;
 $('bExplore').onclick=toggleExplore;
+$('bSail').onclick=enterSailing;
 $('bRain').onclick=ballRain;
 $('bClear').onclick=clearAll;
 $('bSlow').onclick=toggleSlow;
@@ -559,11 +569,14 @@ addEventListener('keydown',e=>{
   if(e.target&&e.target.closest&&e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
   const k=e.key.toLowerCase();
   if(explore.active){
+    if(k==='escape'&&voyage.chartOpen){closeVoyageChart();return;}
+    if(k==='v'&&explore.mode==='helm') return;
     if(k==='escape'){if($('panel').classList.contains('open')) setPanel(false);else exitExplore();return;}
     if(EXPLORE_KEYS.has(k)) return;
   }
   if(k===' '){ if(e.target&&e.target.closest&&e.target.closest('button,input')) return; e.preventDefault(); dropBall(); }
   else if(k==='escape') setPanel(false);
+  else if(k==='b') enterSailing();
   else if(k==='i') toggleIslands();
   else if(k==='u') toggleExplore();
   else if(k==='q') triggerSeaQuake();
@@ -583,31 +596,6 @@ addEventListener('keydown',e=>{
   else if(k>='1'&&k<=String(TYPES.length)) selectType(+k-1);
   if(cinema&&['r','c','h','g'].indexOf(k)>=0) setCinema(false);   /* actions that need the UI leave cinema */
 });
-
-/* ---- click ripples on buttons and chips ---- */
-document.addEventListener('pointerdown',e=>{
-  const b=e.target.closest&&e.target.closest('.btn,.chip,#fab,.seg-b,.scene,.tab'); if(!b||reduceMotion) return;
-  const r=b.getBoundingClientRect(), d=Math.max(r.width,r.height)*2.2, s=el('span','rip');
-  s.style.width=s.style.height=d+'px';
-  s.style.left=(e.clientX-r.left-d/2)+'px'; s.style.top=(e.clientY-r.top-d/2)+'px';
-  b.appendChild(s); setTimeout(()=>s.remove(),720);
-});
-
-/* ---- glare that follows the mouse across every glass panel ---- */
-(function(){
-  let px=-9999,py=-9999,queued=false;
-  function applyGlare(){
-    queued=false;
-    document.querySelectorAll('.glass').forEach(g=>{
-      const r=g.getBoundingClientRect();
-      const near=px>r.left-90&&px<r.right+90&&py>r.top-90&&py<r.bottom+90;
-      g.style.setProperty('--glare',near?1:0);
-      if(near){ g.style.setProperty('--mx',(px-r.left)+'px'); g.style.setProperty('--my',(py-r.top)+'px'); }
-    });
-  }
-  addEventListener('pointermove',e=>{ if(e.pointerType!=='mouse')return; px=e.clientX;py=e.clientY; if(!queued){queued=true;requestAnimationFrame(applyGlare);} },{passive:true});
-  document.addEventListener('pointerleave',()=>{ px=py=-9999; applyGlare(); });
-})();
 
 /* ---- live stats + conditions (called twice a second from the main loop) ---- */
 const ICONS={

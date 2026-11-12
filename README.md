@@ -8,16 +8,27 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000` in a WebGL 2 capable browser.
 
-## Swim & explore the ship
+## Sail, swim & explore
 
-Select **Explore** in the dock (or press **U**) to bring in a floating sailing ship and enter first-person swimming. The ship loads locally on demand, follows the swells with gentle heave and roll, and casts a reflection; wind moves its sails and rougher water creates small patches of contact foam. The **Blue-water voyage** and **Storm voyage** scene presets also bring the ship into view. You can switch the ship on or off in **Settings → Scene** without entering exploration.
+Choose **Sail** in the dock (or press **B**) to load the ship and go straight to the helm. It starts at anchor. The chase view follows the actual moving hull; **Deck view** puts you aboard in first person. Drag the scene to look around in either view. You can also select **Explore** (or **U**) to start in the water, swim alongside, and board the open main deck with **E** / **Board**. From the deck, choose **Take helm** or press **B**.
 
-- On desktop, drag the scene to look, use **W/A/S/D** or the arrow keys to move, **Space** to rise and **Shift** to dive. Swim alongside and surface, then press **E** or select **Board**. **E** / **Leave deck** returns you to the water; **Esc**, **U** or **Exit** returns to the original orbit and ball controls.
-- On a touch device, drag the scene to look and hold the movement and **Rise/Dive** buttons. **Board** and **Exit** are in the exploration bar. Speed and look sensitivity are adjustable under **Settings → Camera**, which also has **Frame ship** and **Frame islands** buttons for the orbit view.
-- You can swim below the surface and walk onto suitable island shores. Depth is limited to 10 m below the local surface, and exploration is bounded to the surrounding area. Underwater visibility, colour and surface reflection change with depth.
-- The ship's **open main deck** uses collision sampled from the actual mesh. Its enclosed cabins are not modeled as explorable interiors; walls, ropes and other decorative details are not full collision bodies. Boarding places you on the accessible main deck, and walking is limited by the sampled deck and rail boundary. Balls can land on the deck, but the hull is not a full rigid-body collider.
+- At the helm, hold **W / ↑** to raise sail and **S / ↓** to ease it; **A / D** or **← / →** steer. The sail-power slider is an alternative to holding a key. **Space** or the anchor button drops or lifts the anchor; raising sail also lifts it. **V** switches between chase and deck views. Heading, speed in knots, sail power and anchor/pilot status are shown on the instruments.
+- On touch screens, hold the arrows to adjust sail and steer, use the slider or anchor button, and drag to look. On a phone, a settings button is available in the helm bar. **Leave helm** steps onto the deck without stopping the ship, so you can walk while it keeps its course. From the deck, **E** / **Leave deck** anchors the ship and returns you to the water; **Exit**, **Esc** or **U** anchors it and returns to the original orbit and ball controls.
+- Sailing is a forgiving, wind-assisted model rather than a full sail simulator: stronger wind changes speed, and a calm eventually leaves the vessel drifting. A visible wake grows with speed. The hull samples the sea and turns, heaves, pitches and rolls together with the deck, camera, reflections and resting balls. The ship stops before shallow terrain and at the 180 m sailing-area boundary; turn toward open water to continue. Quakes and the normal pause/slow-motion controls still apply.
 
-The ship is Poly Haven's **Dutch Ship Medium**, a CC0 model by James Ray Cock, Nicolò Zubbini and Rico Cilliers. Full source, license, mirror and conversion details are in [`assets/ship/README.md`](assets/ship/README.md); other free 3D sources considered are in [`docs/3d-asset-research.md`](docs/3d-asset-research.md). The approximately 5.4 MB local asset is fetched only when the ship is enabled, and its GPU resources are released when it is hidden. Touch devices upload smaller textures; low-memory graphics mode limits them to 512 px. If an optional ship file fails to load, the ocean remains usable and the ship can be retried.
+### Voyage chart
+
+Open **Chart** at the helm for a north-up overview of the sailing area, the generated island coastlines, your ship and its recent track. **Zoom in** follows the ship for more local detail. Click or tap open water to set a waypoint; the map can also be focused and operated with arrow keys (hold **Shift** for larger steps), **Enter** to set a waypoint and **Esc** to close it. **Start pilot** steers a direct course and slows and anchors near the marker. Manual steering or sail-power input disengages the pilot; a new coast clears the waypoint and stops an active pilot.
+
+The pilot is deliberately simple: **it does not plan a route around islands**. Keep watch and steer manually around land; the hull's shallow-water check stops forward movement if necessary. The chart and track are session-only and reset when the ship is hidden or automatically relocated.
+
+### Swimming and the accessible deck
+
+On desktop, drag to look, use **W/A/S/D** or the arrow keys to move, **Space** to rise and **Shift** to dive. On touch devices, drag to look and hold the movement and **Rise/Dive** buttons. You can swim below the surface and walk onto suitable island shores. Depth is limited to 10 m below the local surface, and exploration is bounded to the surrounding area. Underwater visibility, colour and surface reflection change with depth. Exploration speed, look sensitivity and orbit framing are adjustable under **Settings → Camera**.
+
+The ship's **open main deck** uses collision sampled from the actual mesh. Its enclosed cabins are not modeled as explorable interiors; walls, ropes and other decorative details are not full collision bodies. Boarding places you on the accessible main deck, and walking is limited by the sampled deck and rail boundary. Balls can land on and travel with the deck; if you hide the ship far from home, nearby balls are given time to drift back. The hull is not a full rigid-body collider.
+
+The **Blue-water voyage** and **Storm voyage** scene presets also bring the ship into view. You can switch it on or off in **Settings → Scene** without entering exploration. The ship is Poly Haven's **Dutch Ship Medium**, a CC0 model by James Ray Cock, Nicolò Zubbini and Rico Cilliers. Full source, license, mirror and conversion details are in [`assets/ship/README.md`](assets/ship/README.md); other free 3D sources considered are in [`docs/3d-asset-research.md`](docs/3d-asset-research.md). The approximately 5.4 MB local asset is fetched only when the ship is enabled, and its GPU resources are released when it is hidden. Touch devices upload smaller textures; low-memory graphics mode limits them to 512 px. If an optional ship file fails to load, the ocean remains usable and the ship can be retried.
 
 ## Seaquakes & island quakes
 
@@ -56,7 +67,7 @@ If the browser loses its WebGL context, rendering pauses and Aqua attempts one a
 
 ## Tests
 
-Run the Node.js tests for graphics startup and recovery, seeded terrain, ship deck collision and sail transparency, quake/wave synchronization, and bounded effects:
+Run the Node.js tests for graphics startup and recovery, seeded terrain, sailing and waypoint physics, ship deck collision and sail transparency, quake/wave synchronization, and bounded effects:
 
 ```sh
 node --test tests/*.test.js
@@ -68,6 +79,7 @@ For the optional end-to-end WebGL tests, start the static server in another term
 npm install --prefix /tmp/aqua-browser-test --no-save playwright-core
 NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/webgl-browser.js
 NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/ship-quake-browser.js
+NODE_PATH=/tmp/aqua-browser-test/node_modules CHROMIUM_PATH=/path/to/chromium node tests/voyage-browser.js
 ```
 
-Set `AQUA_URL` if the server is not at `http://127.0.0.1:8000/`. On headless machines without a GPU, Chromium may need software-rendering flags, for example `CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader"`. The browser tests exercise real shader compilation, desktop swimming and boarding, mobile touch controls and texture limits, quakes, rendering, optional-asset failure, framebuffer retry, and context-loss recovery; they do not replace visual checks on target devices.
+Set `AQUA_URL` if the server is not at `http://127.0.0.1:8000/`. On headless machines without a GPU, Chromium may need software-rendering flags, for example `CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader"`. The browser tests exercise real shader compilation, desktop sailing, swimming and boarding, chart/pilot behaviour, mobile touch controls and responsive layouts, texture limits, quakes, rendering, optional-asset failure, framebuffer retry, and context-loss recovery; they do not replace visual checks on target devices.
