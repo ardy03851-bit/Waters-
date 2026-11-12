@@ -59,11 +59,74 @@ function sceneryGeometry(){
     const top=vertex([0.04,1.04,0],[0,1,0],5,0);
     for(let k=0;k<sides;k++) tri(base+(rings-1)*(sides+1)+k,top,base+(rings-1)*(sides+1)+k+1);
   }
+  /* A fern is a rosette of arching fronds. Each frond is a tapered ribbon, so
+     the generated frond texture can be sampled per fragment without any UV
+     attribute or extra buffer layout. */
+  function fern(){
+    const fronds=6, segments=5;
+    for(let f=0;f<fronds;f++){
+      const a=f*Math.PI*2/fronds+0.35, ca=Math.cos(a), sa=Math.sin(a);
+      const base=v.length/8;
+      for(let j=0;j<=segments;j++){
+        const t=j/segments, reach=(0.12+0.78*t)*0.52, rise=(0.18+0.60*t)-0.30*t*t;
+        const half=0.135*Math.sin(Math.PI*Math.min(1,t*1.1+0.12))*(1-0.35*t)+0.012;
+        const cx=ca*reach, cz=sa*reach, nx=-sa*half, nz=ca*half;
+        vertex([cx-nx,rise,cz-nz],[0,0.88,0],6,0.55*t*t);
+        vertex([cx+nx,rise,cz+nz],[0,0.88,0],6,0.55*t*t);
+      }
+      for(let j=0;j<segments;j++){
+        const a0=base+j*2;
+        tri(a0,a0+2,a0+1); tri(a0+1,a0+2,a0+3);
+      }
+    }
+  }
+  /* Reeds and bamboo: several slim stalks leaning on the breeze. */
+  function reeds(){
+    for(let i=0;i<5;i++){
+      const a=i*2.399+0.4, lean=0.09+0.045*i, top=0.74+0.16*Math.sin(i*3.1);
+      const dx=Math.cos(a), dz=Math.sin(a);
+      tube([[0,0,0],[dx*lean*0.3,top*0.42,dz*lean*0.3],
+            [dx*lean,top*0.76,dz*lean],[dx*lean*1.6,top,dz*lean*1.6]],
+           [0.030,0.026,0.020,0.011],7,0.85);
+    }
+  }
+  /* Mushrooms: a slim stem under a domed cap. */
+  function mushroom(){
+    tube([[0,0,0],[0,0.17,0],[0,0.31,0]],[0.036,0.032,0.041],8,0.25);
+    const sides=10,rings=3,base=v.length/8;
+    const profile=[[0.40,0.260],[0.33,0.318],[0.17,0.348]];
+    for(let j=0;j<rings;j++) for(let k=0;k<=sides;k++){
+      const a=k*Math.PI*2/sides, r=profile[j][0];
+      vertex([Math.cos(a)*r,profile[j][1],Math.sin(a)*r],[Math.cos(a)*0.42,0.90,Math.sin(a)*0.42],8,0);
+    }
+    for(let j=0;j<rings-1;j++) for(let k=0;k<sides;k++){
+      const a0=base+j*(sides+1)+k;
+      tri(a0,a0+sides+1,a0+1); tri(a0+1,a0+sides+1,a0+sides+2);
+    }
+    const top=vertex([0,0.358,0],[0,1,0],8,0);
+    for(let k=0;k<sides;k++) tri(base+(rings-1)*(sides+1)+k,top,base+(rings-1)*(sides+1)+k+1);
+  }
+  /* A moss cushion is a low, lumpy dome that rounds off ledges. */
+  function cushion(){
+    const sides=9,rings=4,base=v.length/8;
+    for(let j=0;j<rings;j++){
+      const t=j/(rings-1), r=0.36*(1-t)*(1-t*0.55)+0.02, y=0.015+0.155*Math.sin(t*Math.PI*0.5);
+      for(let k=0;k<=sides;k++){
+        const a=k*Math.PI*2/sides, bump=1.0+0.13*Math.sin(k*2.3+j*1.7);
+        vertex([Math.cos(a)*r*bump,y,Math.sin(a)*r*bump],[Math.cos(a)*0.55,0.85,Math.sin(a)*0.55],9,0);
+      }
+    }
+    for(let j=0;j<rings-1;j++) for(let k=0;k<sides;k++){
+      const a0=base+j*(sides+1)+k;
+      tri(a0,a0+sides+1,a0+1); tri(a0+1,a0+sides+1,a0+sides+2);
+    }
+  }
   function result(build){ v.length=0;ind.length=0;build();return {vertices:new Float32Array(v),indices:new Uint16Array(ind)}; }
   /* The palm draw uses gl_VertexID; provide a small valid vertex buffer even
      on drivers that validate enabled but inactive attributes in the VAO. */
   return {palm:{vertices:new Float32Array(18*8),indices:new Uint16Array(0)},
-    cactus:result(cactus),flower:result(blossoms),spire:result(spire)};
+    cactus:result(cactus),flower:result(blossoms),spire:result(spire),
+    fern:result(fern),reeds:result(reeds),mushroom:result(mushroom),cushion:result(cushion)};
 }
 
 function sceneryInstances(data,geometry){
@@ -146,16 +209,20 @@ function makeIslandCascades(random,options){
 function makeIslandScenery(options){
   const palmRandom=islandRandom(islands.seed^0x4f9bd231), cactusRandom=islandRandom(islands.seed^0x6c8f1173);
   const flowerRandom=islandRandom(islands.seed^0x7128bc25), spireRandom=islandRandom(islands.seed^0x9a127d5b);
-  const palms=[],cacti=[],flowers=[],spires=[],normal={nx:0,ny:1,nz:0};
+  const fernRandom=islandRandom(islands.seed^0x21c4e7a9), reedRandom=islandRandom(islands.seed^0x5be10d37);
+  const mushroomRandom=islandRandom(islands.seed^0x83f61cc5), cushionRandom=islandRandom(islands.seed^0xa7d3092b);
+  const palms=[],cacti=[],flowers=[],spires=[],ferns=[],reeds=[],mushrooms=[],cushions=[],normal={nx:0,ny:1,nz:0};
   for(const I of islands.land){
-    const biome=ISLAND_BIOMES[I.biome].id;
-    function place(random,target,minY,minNormal,data,height,accept){
+    const biome=ISLAND_BIOMES[I.biome].id, eco=ISLAND_BIOMES[I.biome];
+    function place(random,target,minY,minNormal,data,height,accept,spacing){
       const occupied=[]; let added=0;
+      if(target<=0) return;
       for(let tries=0;tries<target*18&&added<target;tries++){
         const p=islandDetailPoint(I,random); if(!p) continue;
         const y=islandGround(p[0],p[1],normal);
         if(y<minY||normal.ny<minNormal||(accept&&!accept(p,y))) continue;
-        const h=height(random),space=data===flowers?0.22:data===spires?1.8:0.9;
+        const h=height(random),space=spacing!==undefined?spacing:
+          (data===flowers?0.22:data===spires?1.8:data===cushions?0.30:0.9);
         let crowded=false; for(const q of occupied) if((q[0]-p[0])**2+(q[1]-p[1])**2<space*space){crowded=true;break;}
         if(crowded) continue;
         occupied.push(p);data.push(p[0],y-0.04,p[1],h,random()*Math.PI*2,biome,random(),random());added++;
@@ -174,10 +241,24 @@ function makeIslandScenery(options){
       r=>0.55+0.45*r(),p=>islandNoise(p[0]*0.22+5,p[1]*0.22,I.seed+411)>0.38);
     place(spireRandom,Math.round((0.6+I.rx*0.10)*options.landmarks),1.2,0.62,spires,
       r=>(I.biome==='volcanic'?2.4:1.5)+2.5*r());
+    /* Ferns prefer sheltered, damp ground away from the windward cliff. */
+    place(fernRandom,Math.round(I.rx*I.rz*0.40*options.flowers*(eco.ferns||0)),1.6,0.70,ferns,
+      r=>0.80+0.62*r(),p=>islandNoise(p[0]*0.19+2,p[1]*0.19-9,I.seed+512)>0.40,0.55);
+    /* Reeds fill the wet margins just above the tide line. */
+    place(reedRandom,Math.round((I.rx+I.rz)*0.46*options.grass*(eco.reeds||0)),0.34,0.80,reeds,
+      r=>0.85+0.70*r(),(p,y)=>y<3.4,0.42);
+    /* Mushrooms grow in seeded rings in the shade; mossland ones glow. */
+    place(mushroomRandom,Math.round((I.rx+I.rz)*0.34*options.rocks*(eco.mushrooms||0)),1.2,0.72,mushrooms,
+      r=>0.62+0.85*r(),p=>islandNoise(p[0]*0.33+7,p[1]*0.33+3,I.seed+707)>0.54,0.34);
+    /* Moss cushions round off every ledge they can reach. */
+    place(cushionRandom,Math.round(I.rx*I.rz*1.10*options.grass*(eco.cushions||0)),0.9,0.66,cushions,
+      r=>0.85+1.25*r(),null,0.30);
   }
   const geom=sceneryGeometry();
   islands.scenery={palms:sceneryInstances(palms,geom.palm),cacti:sceneryInstances(cacti,geom.cactus),
     flowers:sceneryInstances(flowers,geom.flower),spires:sceneryInstances(spires,geom.spire),
+    ferns:sceneryInstances(ferns,geom.fern),reeds:sceneryInstances(reeds,geom.reeds),
+    mushrooms:sceneryInstances(mushrooms,geom.mushroom),cushions:sceneryInstances(cushions,geom.cushion),
     cascades:makeIslandCascades(islandRandom(islands.seed^0x6419bcf3),options)};
 }
 function disposeIslandScenery(){
@@ -229,7 +310,7 @@ const SCENERY_VS=HDR+`
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNormal; layout(location=2) in vec2 aMaterial;
 layout(location=3) in vec4 aInstance; layout(location=4) in vec4 aInfo;
 uniform mat4 uVP; uniform float uMirror,uTime,uWindStrength; uniform vec2 uWindDir;
-out vec3 vWorld; out vec3 vN; out float vSeed; flat out float vKind; flat out float vBiome;
+out vec3 vWorld; out vec3 vN; out vec3 vLocal; out float vSeed; flat out float vKind; flat out float vBiome;
 void main(){
   float c=cos(aInfo.x),s=sin(aInfo.x);
   vec3 q=vec3(c*aPos.x-s*aPos.z,aPos.y,s*aPos.x+c*aPos.z)*aInstance.w;
@@ -240,38 +321,83 @@ void main(){
   q.xz+=bend;
   vWorld=aInstance.xyz+q;
   vN=normalize(vec3(c*aNormal.x-s*aNormal.z,aNormal.y,s*aNormal.x+c*aNormal.z));
-  vKind=aMaterial.x;vBiome=aInfo.y;vSeed=aInfo.z;
+  vKind=aMaterial.x;vBiome=aInfo.y;vSeed=aInfo.z;vLocal=aPos;
   vec3 p=vWorld;if(uMirror>0.5)p.y=-p.y;
   gl_Position=uVP*vec4(p,1.0);
 }`;
 const SCENERY_FS=HDR+COMMON+`
-in vec3 vWorld; in vec3 vN; in float vSeed; flat in float vKind; flat in float vBiome; out vec4 o;
-uniform sampler2D uRock,uBasalt,uSandstone; uniform vec3 uCamEff; uniform float uMode,uMirror,uSnowCover;
+in vec3 vWorld; in vec3 vN; in vec3 vLocal; in float vSeed; flat in float vKind; flat in float vBiome; out vec4 o;
+uniform sampler2D uRock,uBasalt,uSandstone,uCactus,uMoss,uFern,uReed;
+uniform vec3 uCamEff; uniform float uMode,uMirror,uSnowCover;
+/* Tri-planar sampling of a seamless generated surface. It keeps leaf, skin
+   and bark detail at a constant scale on every face of a plant, with no UV
+   attribute and no seam where a procedural tube closes. */
+vec3 triplant(sampler2D map,vec3 p,vec3 n,float scale){
+  vec3 w=pow(abs(n),vec3(4.0)); w/=max(w.x+w.y+w.z,0.001);
+  return texture(map,p.zy*scale).rgb*w.x+texture(map,p.xz*scale).rgb*w.y+texture(map,p.xy*scale).rgb*w.z;
+}
 void main(){
   if(uMirror>0.5&&vWorld.y<0.0) discard;
   vec3 N=normalize(vN),alb;
+  vec3 emit=vec3(0.0);
+  float grain=texture(uDetail,vWorld.xz*0.8+vWorld.y*0.11).a;
   if(vKind<2.5){
-    float grain=texture(uDetail,vWorld.xz*0.8+vWorld.y*0.11).a;
-    alb=vec3(0.050,0.115,0.055)*(0.82+0.25*vSeed)*(0.80+0.25*grain);
+    /* Cactus: the generated ribbed skin, wrapped around the column axis so
+       the ridges and areoles run up the plant the way real ribs do. */
+    vec2 cuv=vec2(atan(vLocal.z,vLocal.x)*0.15915494+0.5,vLocal.y*1.30+0.08);
+    vec3 skin=texture(uCactus,cuv).rgb;
+    alb=mix(skin*0.62,vec3(0.048,0.112,0.056),0.25)*(0.86+0.26*vSeed);
+    alb*=0.88+0.12*sin(cuv.x*50.265);
+    alb*=0.80+0.24*grain;
   }else if(vKind<3.5){
-    alb=vec3(0.07,0.16,0.035);
+    alb=vec3(0.07,0.16,0.035)*(0.88+0.20*vSeed);
   }else if(vKind<4.5){
     vec3 a=vBiome>0.5&&vBiome<1.5?vec3(0.68,0.13,0.20):vec3(0.75,0.55,0.16);
     vec3 b=vBiome>2.5&&vBiome<3.5?vec3(0.43,0.27,0.62):vec3(0.75,0.75,0.62);
+    if(vBiome>4.5) b=vec3(0.60,0.71,0.88);
     alb=mix(a,b,vSeed);
-  }else{
+  }else if(vKind<5.5){
     vec3 w=pow(abs(N),vec3(3.0));w/=max(w.x+w.y+w.z,0.001);vec3 p=vWorld*0.25+vSeed*3.0;vec3 tex;
     if(vBiome>1.5&&vBiome<2.5) tex=texture(uBasalt,p.zy).rgb*w.x+texture(uBasalt,p.xz).rgb*w.y+texture(uBasalt,p.xy).rgb*w.z;
-    else if(vBiome>3.5) tex=texture(uSandstone,p.zy).rgb*w.x+texture(uSandstone,p.xz).rgb*w.y+texture(uSandstone,p.xy).rgb*w.z;
+    else if(vBiome>3.5&&vBiome<4.5) tex=texture(uSandstone,p.zy).rgb*w.x+texture(uSandstone,p.xz).rgb*w.y+texture(uSandstone,p.xy).rgb*w.z;
     else tex=texture(uRock,p.zy).rgb*w.x+texture(uRock,p.xz).rgb*w.y+texture(uRock,p.xy).rgb*w.z;
     alb=pow(tex,vec3(1.7))*0.90;
     if(vBiome>1.5&&vBiome<2.5) alb+=vec3(0.012);
+    if(vBiome>4.5){
+      float cap=smoothstep(0.36,0.86,N.y);
+      alb=mix(alb,alb*vec3(0.68,1.14,0.64)+vec3(0.010,0.028,0.008),cap*0.55);
+    }
+  }else if(vKind<6.5){
+    /* Fern: generated fronds sampled tri-planar, tinted per plant. */
+    vec3 frond=triplant(uFern,vLocal*3.6+vec3(vSeed*2.3,vSeed*1.1,0.0),N,1.0);
+    alb=pow(frond,vec3(1.15))*vec3(0.78,1.18,0.70)*(0.82+0.30*vSeed);
+    alb*=0.88+0.18*grain;
+    if(vBiome>4.5) alb=mix(alb,alb*vec3(0.86,1.10,1.02),0.35);
+  }else if(vKind<7.5){
+    /* Reeds and bamboo: vertical stalks from the generated reed sheet. */
+    vec2 ruv=vec2(atan(vLocal.z,vLocal.x)*0.15915494+0.5,vLocal.y*1.9+vSeed);
+    vec3 stalk=texture(uReed,ruv).rgb;
+    alb=pow(stalk,vec3(1.18))*vec3(0.96,1.10,0.74)*(0.86+0.22*grain);
+  }else if(vKind<8.5){
+    /* Mushrooms: cap fibres and creamy speckles. Mossland ones are luminous
+       after dark, which reads as bioluminescence rather than lampshades. */
+    float spots=smoothstep(0.60,0.78,texture(uDetail,vLocal.xz*6.5+vSeed*4.0).a);
+    alb=mix(vec3(0.34,0.15,0.09),vec3(0.74,0.46,0.22),vSeed);
+    alb=mix(alb,vec3(0.88,0.86,0.72),spots*0.8);
+    alb*=0.86+0.26*grain;
+    if(vBiome>4.5) emit=vec3(0.10,0.46,0.36)*uNight*(1.3+0.9*vSeed);
+  }else{
+    /* Moss cushion: the generated carpet wrapped over a low dome. */
+    vec3 carpet=triplant(uMoss,vLocal*3.1+vec3(vSeed*3.0),N,1.0);
+    alb=pow(carpet,vec3(1.22))*vec3(0.80,1.14,0.74)*(0.86+0.30*vSeed);
+    alb*=0.84+0.22*grain;
   }
   alb*=1.0-uRain*0.20;
   float snow=max(uSnowCover,(vBiome>2.5&&vBiome<3.5)?0.75:0.0)*smoothstep(5.0,11.0,vWorld.y)*smoothstep(0.35,0.85,N.y);
   alb=mix(alb,vec3(0.61,0.68,0.70),snow*0.65);
   float nl=max(dot(N,uLight),0.0);
   vec3 col=alb*(uZenith*0.38+uHorizon*0.20+vec3(0.28*uAmbLum)+uSunCol*(0.15+0.35*nl));
+  col+=emit;
   col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
 }`;
@@ -320,9 +446,13 @@ function drawIslandScenery(mode,mirror,ce){
   gl.uniform1f(L(pScenery,'uWindStrength'),clamp(envS.wind/28,0,1)*islands.options.wind);
   gl.uniform2f(L(pScenery,'uWindDir'),Math.sin(windAng),Math.cos(windAng));
   bindIslandTexture(6,islandTextures.rock,pScenery,'uRock');
-  bindIslandTexture(12,islandTextures.basalt||islandTextures.rock,pScenery,'uBasalt');
-  bindIslandTexture(13,islandTextures.sandstone||islandTextures.talus,pScenery,'uSandstone');
-  for(const item of [d.cacti,d.flowers,d.spires]) if(item.count){
+  bindIslandTexture(7,islandTextures.basalt||islandTextures.rock,pScenery,'uBasalt');
+  bindIslandTexture(8,islandTextures.sandstone||islandTextures.talus,pScenery,'uSandstone');
+  bindIslandTexture(9,islandTextures.cactus||islandTextures.grass,pScenery,'uCactus');
+  bindIslandTexture(10,islandTextures.moss||islandTextures.grass,pScenery,'uMoss');
+  bindIslandTexture(11,islandTextures.fern||islandTextures.grass,pScenery,'uFern');
+  bindIslandTexture(12,islandTextures.reed||islandTextures.talus,pScenery,'uReed');
+  for(const item of [d.cacti,d.flowers,d.spires,d.ferns,d.reeds,d.mushrooms,d.cushions]) if(item.count){
     gl.bindVertexArray(item.vao);gl.drawElementsInstanced(gl.TRIANGLES,item.indexCount,gl.UNSIGNED_SHORT,0,item.count);
   }
   if(d.cascades.count){

@@ -11,6 +11,10 @@ let quality='auto', paused=false;
 let motionBlurOn=true, blurStrength=1, lensFxOn=true;
 /* enhanced graphics mode: full-res reflections, denser VFX, extra shader detail */
 let hqMode=false;
+/* camera-grade post effects: physically motivated highlight bloom, FXAA and a
+   whisper of film grain. All three degrade gracefully to a pass-through. */
+let bloomOn=!safeGraphics, bloomAmt=0.62, grainAmt=0.016, fxaaOn=true;
+const BLOOM_THRESHOLD=0.68;
 /* previous frame's view-projection, for the motion-blur reprojection */
 const prevVPm=new Float32Array(16);
 let havePrev=false, frameInterval=1/60, rendererStarted=false;
@@ -27,6 +31,9 @@ const targetMaxH=Math.min(texLimit,rbLimit,viewportLimit[1]);
 let allocationPixelLimit=Infinity;
 function setQuality(q){
   quality=QUALITY_PR[q]?q:'auto';
+  /* Bloom is subtle by design; on the low preset it also gets quieter so the
+     glow never turns into a haze over a small, low-resolution frame. */
+  bloomAmt=quality==='low'?0.42:(quality==='ultra'?0.70:0.62);
   if(quality!=='auto') pr=Math.min(QUALITY_PR[quality],safeGraphics?maxPR:Math.max(1,maxPR));
   else { prCeil=maxPR; pr=Math.min(maxPR,1.25); }
   resize();
@@ -75,13 +82,32 @@ function resize(force=false){
 }
 addEventListener('resize',()=>resize()); addEventListener('orientationchange',()=>setTimeout(()=>resize(),200));
 
+/* Cheap sphere-vs-viewport rejection. Balls can travel far outside the view
+   while the orbit camera stays put, and each one is its own draw call. A wide
+   margin keeps partially visible silhouettes and their motion blur intact. */
+function ballOnScreen(b,mirror){
+  const y=mirror?2*b.wh-b.y:b.y, m=VP;
+  const cx=m[0]*b.x+m[4]*y+m[8]*b.z+m[12];
+  const cy=m[1]*b.x+m[5]*y+m[9]*b.z+m[13];
+  const cw=m[3]*b.x+m[7]*y+m[11]*b.z+m[15];
+  if(cw<=0.0001) return false;
+  return Math.abs(cx)<cw*1.9&&Math.abs(cy)<cw*1.9;
+}
+
 function drawBalls(mode,mirror){
   if(balls.length===0) return;
   gl.useProgram(pBall); setSky(pBall);
   gl.uniformMatrix4fv(L(pBall,'uVP'),false,VP);
   gl.uniform1f(L(pBall,'uMode'),mode); gl.uniform1f(L(pBall,'uMirror'),mirror);
+  /* One atlas for every ball: one binding, one sampler, no per-ball upload. */
+  if(ballAtlas.ready){
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D,ballAtlas.tex);
+    gl.uniform1i(L(pBall,'uBallTex'),5);
+    gl.uniform3f(L(pBall,'uAtlasInfo'),ballAtlas.cols,ballAtlas.rows,1);
+  }else gl.uniform3f(L(pBall,'uAtlasInfo'),ballAtlas.cols,ballAtlas.rows,0);
   gl.bindVertexArray(sphereVAO);
   for(const b of balls){
+    if(!ballOnScreen(b,mirror)) continue;
     const q=b.q,x=q[0],y=q[1],z=q[2],w=q[3],m=b.rot;
     m[0]=1-2*(y*y+z*z);m[1]=2*(x*y+w*z);m[2]=2*(x*z-w*y);
     m[3]=2*(x*y-w*z);m[4]=1-2*(x*x+z*z);m[5]=2*(y*z+w*x);
@@ -94,6 +120,7 @@ function drawBalls(mode,mirror){
     gl.drawElements(gl.TRIANGLES,sphereIdxCount,gl.UNSIGNED_SHORT,0);
   }
   gl.bindVertexArray(null);
+  gl.activeTexture(gl.TEXTURE0);
 }
 
 function render(){
@@ -193,6 +220,7 @@ function drawMotionVectors(){
   gl.uniform2f(L(pMotion,'uRes'),W,Hh);
   gl.bindVertexArray(sphereVAO);
   for(const b of balls){
+    if(!ballOnScreen(b,false)) continue;
     const prev=b.motionPrev;
     gl.uniform3f(L(pMotion,'uPos'),b.x,b.y,b.z); gl.uniform1f(L(pMotion,'uR'),b.r);
     gl.uniformMatrix3fv(L(pMotion,'uRot'),false,b.rot);
@@ -235,6 +263,33 @@ function hasFrameMotion(){
   }
   return false;
 }
+/* Bright pass + separable blur into the quarter-resolution ping-pong pair.
+   Runs before the post pass samples it, and is skipped entirely when off. */
+function drawBloom(){
+  if(!bloomOn||!bloom) return;
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.useProgram(pBloom);
+  gl.uniform1i(L(pBloom,'uSrc'),0);
+  gl.uniform2f(L(pBloom,'uTexel'),1/bloom.w,1/bloom.h);
+  gl.bindVertexArray(emptyVAO);
+  /* 1: bright pass from the resolved frame into a */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.a.fb); gl.viewport(0,0,bloom.w,bloom.h);
+  gl.uniform1f(L(pBloom,'uMode'),0); gl.uniform1f(L(pBloom,'uThreshold'),BLOOM_THRESHOLD);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  /* 2: horizontal blur a -> b */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.b.fb);
+  gl.uniform1f(L(pBloom,'uMode'),1); gl.uniform2f(L(pBloom,'uDir'),1,0);
+  gl.bindTexture(gl.TEXTURE_2D,bloom.a.color);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  /* 3: vertical blur b -> a */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,bloom.a.fb);
+  gl.uniform2f(L(pBloom,'uDir'),0,1);
+  gl.bindTexture(gl.TEXTURE_2D,bloom.b.color);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.bindVertexArray(null);
+}
+
 /* Depth-aware, bounded camera + object blur. Exposure is normalized by real
    frame time, rather than making a low-FPS frame smear much farther. */
 function postPass(submerge=cameraSubmerge()){
@@ -243,6 +298,7 @@ function postPass(submerge=cameraSubmerge()){
     clamp(blurStrength*(1/90)/Math.max(frameInterval,1/240),0,2):0;
   const hasVelocity=mb>0.001&&(balls.length>0||(ship.enabled&&ship.status==='ready'));
   if(hasVelocity) drawMotionVectors();
+  drawBloom();
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.viewport(0,0,W,Hh);
   gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
@@ -255,8 +311,13 @@ function postPass(submerge=cameraSubmerge()){
   gl.uniform1f(L(pPost,'uMB'),mb); gl.uniform1f(L(pPost,'uHasVelocity'),hasVelocity?1:0);
   gl.uniform1f(L(pPost,'uCA'),lensFxOn?0.0024:0); gl.uniform1f(L(pPost,'uVig'),lensFxOn?0.18:0);
   gl.uniform1f(L(pPost,'uSubmerge'),submerge);gl.uniform1f(L(pPost,'uWaterTime'),simT);
+  gl.uniform1f(L(pPost,'uBloomAmt'),bloomOn&&bloom?bloomAmt:0);
+  gl.uniform1f(L(pPost,'uFXAA'),fxaaOn?1:0);
+  gl.uniform1f(L(pPost,'uGrain'),hqMode?grainAmt:0);
   gl.uniform1i(L(pPost,'uScene'),0); gl.uniform1i(L(pPost,'uDepth'),1);
   gl.uniform1i(L(pPost,'uVelocity'),2); gl.uniform1i(L(pPost,'uMotionTile'),3);
+  gl.uniform1i(L(pPost,'uBloom'),4);
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D,bloom?bloom.a.color:post.color);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,post.color);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,post.depth);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,motion.color);

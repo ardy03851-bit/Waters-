@@ -11,22 +11,34 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 layout(location=2) in vec2 aUV;
 uniform mat4 uVP,uModel;
-uniform float uMirror,uSail,uTime,uWind;
+uniform vec3 uMeshScale;
+uniform float uMirror,uSail,uTime,uWind,uBillow;
 out vec3 vWorld,vN; out vec2 vUV;
 void main(){
-  vec3 local=aPos;
-  /* The cloth responds gently to the breeze; hull and collision stay rigid. */
-  if(uSail>0.5) local.z+=sin(local.x*1.35+local.y*0.7+uTime*(0.8+uWind))*0.045*uWind;
+  /* Each class re-proportions the same mesh: hull beam and length, mast
+     height and sail area are all a per-mesh scale, so the CPU collision
+     transform can stay an exact match of what is drawn. */
+  vec3 local=aPos*uMeshScale;
+  if(uSail>0.5){
+    /* Cloth bellies out downwind and flutters in smaller panel waves. The
+       displacement is only a few centimetres on a 24 m ship, so the canvas
+       reads as fastened to the yards while it breathes. */
+    float panel=sin(local.x*2.15+local.y*1.1+uTime*(0.9+uWind*0.5));
+    float ripple=sin(local.y*6.4-uTime*(3.1+uWind*1.7)+local.x*0.7)*0.35;
+    local.z+=(panel*0.050+ripple*0.018)*uWind*uBillow;
+  }
   vec4 w=uModel*vec4(local,1.0);
-  vWorld=w.xyz; vN=mat3(uModel)*aNormal; vUV=aUV;
+  vWorld=w.xyz;
+  vN=mat3(uModel)*normalize(aNormal/max(uMeshScale,vec3(0.001)));
+  vUV=aUV;
   if(uMirror>0.5) w.y=-w.y;
   gl_Position=uVP*w;
 }`;
 const SHIP_FS=HDR+COMMON+`
 in vec3 vWorld,vN; in vec2 vUV; out vec4 o;
 uniform sampler2D uAlbedo,uNormalMap,uMaterial;
-uniform vec3 uCamEff;
-uniform float uMirror,uMode,uSail,uUnderwater;
+uniform vec3 uCamEff,uTint;
+uniform float uMirror,uMode,uSail,uUnderwater,uSailTrans;
 void main(){
   if(uMirror>0.5&&vWorld.y<0.0) discard;
   vec4 tex=texture(uAlbedo,vUV);
@@ -47,7 +59,18 @@ void main(){
   }
   vec3 orm=texture(uMaterial,vUV).rgb;
   float rough=clamp(orm.g,0.20,1.0), metal=uSail>0.5?0.0:orm.b;
-  vec3 albedo=pow(tex.rgb,vec3(1.8))*1.18;
+  vec3 albedo=pow(tex.rgb,vec3(1.8))*1.18*uTint;
+  if(uSail>0.5){
+    /* Canvas: a woven thread pattern that fades out before it can alias,
+       patch seams, and sunlight bleeding through the cloth from behind. */
+    float fade=1.0-smoothstep(0.015,0.09,length(fwidth(vUV)));
+    float weave=sin(vUV.x*540.0)*sin(vUV.y*540.0);
+    albedo*=1.0+weave*0.055*fade;
+    float seam=1.0-smoothstep(0.0,0.006,min(abs(fract(vUV.x*3.0)-0.5),abs(fract(vUV.y*2.0)-0.5)));
+    albedo*=1.0-seam*0.10*fade;
+    float back=max(dot(normalize(-uLight),N),0.0);
+    albedo+=uSunCol*back*uSailTrans*0.16;
+  }
   float wet=max(uRain*0.35,1.0-smoothstep(-0.1,1.2,vWorld.y));
   albedo*=mix(1.0,0.68,wet*(1.0-uSail));
   rough=mix(rough,0.24,wet*0.55*(1.0-uSail));
@@ -58,6 +81,11 @@ void main(){
   float gloss=mix(6.0,110.0,1.0-rough);
   float spec=pow(max(dot(N,H),0.0),gloss)*(0.04+metal*0.32+wet*0.08)*nl;
   col+=uSunCol*spec;
+  /* Sails glow a little when backlit; timber does not. */
+  if(uSail>0.5){
+    float back=max(dot(normalize(-uLight),N),0.0);
+    col+=albedo*uSunCol*back*uSailTrans*0.32+albedo*vec3(0.10,0.11,0.12)*uAmbLum*0.35;
+  }
   if(uMode<0.5) col+=albedo*vec3(0.035,0.10,0.12)*uUnderwater;
   col=mix(col,uFogCol,1.0-exp(-length(uCamEff-vWorld)*uFogD));
   if(uMode>0.5) o=vec4(enc(col),1.0); else o=vec4(tonemap(col),1.0);
@@ -65,13 +93,16 @@ void main(){
 const SHIP_MOTION_VS=HDR+`
 layout(location=0) in vec3 aPos; layout(location=2) in vec2 aUV;
 uniform mat4 uVP,uPrevVP,uModel,uPrevModel;
-uniform float uSail,uWind,uTime,uPrevTime;
+uniform vec3 uMeshScale;
+uniform float uSail,uWind,uTime,uPrevTime,uBillow;
 out vec4 vNow,vOld; out vec2 vUV;
 void main(){
-  vec3 p=aPos,old=aPos;
+  vec3 p=aPos*uMeshScale,old=aPos*uMeshScale;
   if(uSail>0.5){
-    p.z+=sin(p.x*1.35+p.y*0.7+uTime*(0.8+uWind))*0.045*uWind;
-    old.z+=sin(old.x*1.35+old.y*0.7+uPrevTime*(0.8+uWind))*0.045*uWind;
+    float panel=sin(p.x*2.15+p.y*1.1),ripple=sin(p.y*6.4+p.x*0.7)*0.35;
+    float prevPanel=sin(old.x*2.15+old.y*1.1),prevRipple=sin(old.y*6.4+old.x*0.7)*0.35;
+    p.z+=(panel*sin(uTime*(0.9+uWind*0.5))*0.050+ripple*sin(-uTime*(3.1+uWind*1.7))*0.018)*uWind*uBillow;
+    old.z+=(prevPanel*sin(uPrevTime*(0.9+uWind*0.5))*0.050+prevRipple*sin(-uPrevTime*(3.1+uWind*1.7))*0.018)*uWind*uBillow;
   }
   vNow=uVP*uModel*vec4(p,1.0);vOld=uPrevVP*uPrevModel*vec4(old,1.0);vUV=aUV;gl_Position=vNow;
 }`;
@@ -90,8 +121,54 @@ const pShip=program(SHIP_VS,SHIP_FS,'ship'),pShipMotion=program(SHIP_MOTION_VS,S
 const SHIP_ASSET='assets/ship/';
 /* Heading is clockwise from north; the model's bow is its local +X axis. */
 const SHIP_LIMIT=180;
+/* ---------------------------------------------------------------
+   Ship selection
+
+   Every class is built from the same CC0 CC0 Dutch-ship geometry, which is the
+   only redistributable hull in this repository: no external download is
+   required at runtime. Each class re-proportions the hull, masts and canvas,
+   retints the timber, rigging and sails, and changes how the vessel behaves
+   under sail. The local mesh, deck sampling and ball contacts stay exact for
+   every class because the collision transform uses the same hull scale.
+   --------------------------------------------------------------- */
+const SHIP_CLASSES=[
+  {name:'Merchantman',short:'Merchant',tag:'Dutch merchant · balanced all-rounder',
+   note:'The original tall-pooped trader. Forgiving, roomy deck, steady in a seaway.',
+   hull:[1.00,1.00,1.00],mast:1.00,speed:1.00,agility:1.00,heel:1.00,
+   hullTint:[1.00,0.98,0.94],rigTint:[0.94,0.92,0.86],sailTint:[0.97,0.93,0.82]},
+  {name:'Coastal sloop',short:'Sloop',tag:'Small, nimble single-master',
+   note:'Short hull, tall rig, quick helm. Tacks fast but pounds in a steep sea.',
+   hull:[0.80,0.94,0.88],mast:1.10,speed:1.06,agility:1.34,heel:1.12,
+   hullTint:[0.86,1.00,0.96],rigTint:[0.98,0.96,0.90],sailTint:[1.00,0.97,0.88]},
+  {name:'Brigantine',short:'Brig',tag:'Two-masted raider',
+   note:'A long, low hull with a big sail plan. Fast off the wind, stiff to leeward.',
+   hull:[0.94,1.02,0.94],mast:1.06,speed:1.07,agility:1.06,heel:1.05,
+   hullTint:[0.82,0.92,0.80],rigTint:[0.90,0.90,0.86],sailTint:[0.93,0.91,0.82]},
+  {name:'Caravel',short:'Caravel',tag:'Round-bowed explorer',
+   note:'Beamy and buoyant: a comfortable, slow-turning blue-water hull.',
+   hull:[0.90,0.98,1.14],mast:0.94,speed:0.90,agility:0.94,heel:0.92,
+   hullTint:[1.06,0.88,0.72],rigTint:[0.94,0.88,0.78],sailTint:[0.98,0.92,0.78]},
+  {name:'Frigate',short:'Frigate',tag:'Fast naval square-rigger',
+   note:'Long, fine entry and a towering rig. Reaches hard, carries her way far.',
+   hull:[1.16,1.05,1.00],mast:1.14,speed:1.14,agility:0.92,heel:1.08,
+   hullTint:[1.02,0.98,0.80],rigTint:[0.96,0.94,0.88],sailTint:[1.02,1.00,0.96]},
+  {name:'Clipper',short:'Clipper',tag:'Extreme, slender and quick',
+   note:'The fastest hull here: knife-thin bow, towering canvas, wet ride.',
+   hull:[1.26,1.00,0.88],mast:1.20,speed:1.26,agility:1.04,heel:1.18,
+   hullTint:[1.06,1.02,0.92],rigTint:[0.98,0.97,0.94],sailTint:[1.05,1.03,0.98]},
+  {name:'Dhow',short:'Dhow',tag:'Lateen-rigged trader',
+   note:'Low freeboard and a light, weatherly rig. Wears round and reaches well.',
+   hull:[0.94,0.92,0.98],mast:0.92,speed:1.02,agility:1.20,heel:1.14,
+   hullTint:[1.08,0.80,0.62],rigTint:[0.92,0.84,0.70],sailTint:[1.06,0.98,0.80]},
+  {name:'Ghost galleon',short:'Galleon',tag:'Barnacled, half-forgotten',
+   note:'A heavy galleon under pale, patched canvas. Slow to answer, hard to stop.',
+   hull:[1.10,1.08,1.06],mast:1.10,speed:0.96,agility:0.84,heel:1.02,
+   hullTint:[0.70,0.84,0.84],rigTint:[0.74,0.80,0.78],sailTint:[0.82,0.88,0.86]}
+];
+const SHIP_HULL_IDENTITY=[1,1,1];
 const ship={enabled:false,status:'idle',error:'',x:0,z:0,y:0,roll:0,pitch:0,heading:Math.PI/2,poseReady:false,
-  speed:0,throttle:0,anchored:true,vx:0,vy:0,vz:0,turnRate:0,travelled:0,relocated:false,warningTime:-10,
+  speed:0,throttle:0,anchored:true,vx:0,vy:0,vz:0,turnRate:0,rudder:0,heel:0,pointOfSail:1,travelled:0,relocated:false,warningTime:-10,
+  classIndex:0,hull:[1,1,1],hullMax:1,classScale:1,
   matrix:new Float32Array(16),meshes:[],textures:[],buffers:[],grid:null,load:null,foamClock:0,wakeClock:0,motionPrev:null,prevTime:0};
 const SHIP_GRID={minX:-11,minZ:-3.5,cell:0.5,width:48,height:14};
 
@@ -324,13 +401,31 @@ function setShipEnabled(on){
     if(ship.status==='ready'){releaseShipResources();ship.status='idle';}
   }
 }
+function shipClass(){ return SHIP_CLASSES[ship.classIndex]||SHIP_CLASSES[0]; }
+function shipHullScale(){ return ship.hull; }
+/* Choosing a class re-proportions the hull. Everything that maps between the
+   model's local frame and the world - rendering, deck walking, boarding and
+   ball contacts - uses this one scale, so no two systems can disagree. */
+function setShipClass(index){
+  const next=clamp(Math.round(index)||0,0,SHIP_CLASSES.length-1);
+  ship.classIndex=next;
+  const hull=SHIP_CLASSES[next].hull;
+  ship.hull[0]=hull[0]; ship.hull[1]=hull[1]; ship.hull[2]=hull[2];
+  ship.hullMax=Math.max(hull[0],hull[1],hull[2]);
+  ship.classScale=Math.max(hull[0],hull[2]);
+  ship.poseReady=false; ship.motionPrev=null;
+  if(typeof havePrev!=='undefined') havePrev=false;
+  shipMatrix();
+  return next;
+}
 function shipPoint(x,y,z){
-  const m=ship.matrix;
+  const m=ship.matrix,h=ship.hull;
+  x*=h[0]; y*=h[1]; z*=h[2];
   return [m[0]*x+m[4]*y+m[8]*z+m[12],m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14]];
 }
 function shipLocal(x,y,z){
-  const m=ship.matrix,dx=x-m[12],dy=y-m[13],dz=z-m[14];
-  return [m[0]*dx+m[1]*dy+m[2]*dz,m[4]*dx+m[5]*dy+m[6]*dz,m[8]*dx+m[9]*dy+m[10]*dz];
+  const m=ship.matrix,h=ship.hull,dx=x-m[12],dy=y-m[13],dz=z-m[14];
+  return [(m[0]*dx+m[1]*dy+m[2]*dz)/h[0],(m[4]*dx+m[5]*dy+m[6]*dz)/h[1],(m[8]*dx+m[9]*dy+m[10]*dz)/h[2]];
 }
 function shipMatrix(){
   const cx=Math.cos(ship.roll),sx=Math.sin(ship.roll),cz=Math.cos(ship.pitch),sz=Math.sin(ship.pitch),m=ship.matrix;
@@ -349,6 +444,7 @@ function shipWarning(message){
 function updateShip(dt,sdt){
   if(!ship.enabled) return;
   let fx=Math.sin(ship.heading),fz=-Math.cos(ship.heading),rx=Math.cos(ship.heading),rz=Math.sin(ship.heading);
+  const cls=shipClass();
   if(sdt>0&&ship.status==='ready'){
     const atHelm=typeof explore!=='undefined'&&explore.active&&explore.mode==='helm';
     let power=0,steer=0;
@@ -361,22 +457,35 @@ function updateShip(dt,sdt){
     if((steer||power)&&typeof stopVoyagePilot==='function') stopVoyagePilot();
     else if(!steer&&typeof voyageSteering==='function') steer=voyageSteering();
     const wind=typeof envS==='undefined'?8:clamp(envS.wind,0,28);
-    const windDirection=typeof windAng==='undefined'?0:windAng;
-    const windAlong=fx*Math.sin(windDirection)+fz*Math.cos(windDirection);
-    const windFactor=0.82+0.18*Math.abs(windAlong);
-    /* A forgiving, wind-assisted sailing model: without wind the vessel
-       gradually coasts to a stop rather than sailing under invisible power. */
-    const target=ship.anchored?0:ship.throttle*(2.0+wind*0.16)*windFactor*clamp(wind/4,0,1);
-    ship.speed+=(target-ship.speed)*(1-Math.exp(-sdt*(ship.anchored?2.8:0.7)));
+    const windDirection=typeof windAng===undefined?0:windAng;
+    const windX=Math.sin(windDirection), windZ=Math.cos(windDirection);
+    const along=fx*windX+fz*windZ;
+    /* Points of sail. Square rigs run best with the wind astern but still
+       make ground to windward; the heading therefore changes speed the way
+       it does on the water, while the model stays forgiving. */
+    ship.pointOfSail=0.60+0.40*clamp(0.5+0.5*along,0,1);
+    const drive=clamp(wind/4,0,1)*ship.pointOfSail;
+    const target=ship.anchored?0:ship.throttle*(2.0+wind*0.16)*cls.speed*drive;
+    /* Weight: the hull gains way slowly and carries it long after the wind
+       eases, so acceleration is a curve rather than a step response. */
+    const tau=ship.anchored?0.55:(target>ship.speed?1.9:1.8);
+    ship.speed+=(target-ship.speed)*(1-Math.exp(-sdt/tau));
     if(ship.speed<0.005) ship.speed=0;
-    const turn=ship.anchored?0:steer*(0.18+0.30*clamp(ship.speed/3,0,1))*sdt;
+    /* Rudder inertia: the helm answers over about a second, and a longer or
+       finer hull turns with more authority once it has way on. */
+    ship.rudder+=(clamp(steer,-1,1)-ship.rudder)*(1-Math.exp(-sdt*4.2));
+    const authority=(0.20+0.34*clamp(ship.speed/4,0,1))*cls.agility;
+    const turn=ship.anchored?0:ship.rudder*authority*sdt;
     let nextHeading=ship.heading+turn;
     if(turn&&!shipPlacementOK(ship.x,ship.z,nextHeading)){
       nextHeading=ship.heading;shipWarning('Too close to shore to turn that way');
     }
     const dh=nextHeading-ship.heading;
     const nfx=Math.sin(nextHeading),nfz=-Math.cos(nextHeading);
-    const dx=nfx*ship.speed*sdt,dz=nfz*ship.speed*sdt,nx=ship.x+dx,nz=ship.z+dz;
+    const nrx=Math.cos(nextHeading),nrz=Math.sin(nextHeading);
+    /* A touch of leeward slip: the wake is not exactly where the bow points. */
+    const slip=clamp(ship.speed*0.05,0,0.24)*ship.rudder;
+    const dx=(nfx*ship.speed-nrx*slip)*sdt,dz=(nfz*ship.speed-nrz*slip)*sdt,nx=ship.x+dx,nz=ship.z+dz;
     if(dx===0&&dz===0){ship.vx=ship.vz=0;}
     else if(Math.hypot(nx,nz)<=SHIP_LIMIT&&shipPlacementOK(nx,nz,nextHeading)){
       ship.x=nx;ship.z=nz;ship.travelled+=Math.hypot(dx,dz);
@@ -393,11 +502,24 @@ function updateShip(dt,sdt){
   const h0=shipHeight(ship.x,ship.z),fore=shipHeight(ship.x+fx*6,ship.z+fz*6),aft=shipHeight(ship.x-fx*6,ship.z-fz*6),
     port=shipHeight(ship.x+rx*2.2,ship.z+rz*2.2),star=shipHeight(ship.x-rx*2.2,ship.z-rz*2.2);
   const pitch=clamp(Math.atan2(fore-aft,12),-0.12,0.12),roll=clamp(-Math.atan2(port-star,4.4),-0.14,0.14);
+  /* Heel: wind pressure on the canvas plus the outward lean of a turn. It is
+     smoothed separately from the wave roll, so the deck settles instead of
+     snapping when the wind or the helm changes. */
+  const windNow=typeof envS==='undefined'?8:envS.wind;
+  const windDirNow=typeof windAng==='undefined'?0:windAng;
+  /* Beam wind is what lays a sailing ship over: a following wind pushes from
+     astern and barely heels her, a reaching wind puts her lee rail down. The
+     sideways component is the wind projected onto the beam (starboard +). */
+  const windX=Math.sin(windDirNow), windZ=Math.cos(windDirNow);
+  const beamWind=rx*windX+rz*windZ;
+  const windHeel=clamp(beamWind,-1,1)*clamp(ship.throttle,0,1)*clamp(windNow/22,0,1)*0.13*cls.heel;
+  const turnHeel=-clamp(ship.turnRate*7,-1,1)*0.05*cls.heel;
+  if(sdt>0) ship.heel+=((windHeel+turnHeel)-ship.heel)*(1-Math.exp(-sdt*1.3));
   const oldY=ship.y,hadPose=ship.poseReady;
-  if(!ship.poseReady){ship.y=h0;ship.pitch=pitch;ship.roll=roll;ship.poseReady=true;}
+  if(!ship.poseReady){ship.y=h0;ship.pitch=pitch;ship.roll=roll+ship.heel;ship.poseReady=true;}
   else if(sdt>0){
     const k=1-Math.exp(-sdt*2.3),kr=1-Math.exp(-sdt*1.6);
-    ship.y+=(h0-ship.y)*k; ship.pitch+=(pitch-ship.pitch)*kr; ship.roll+=(roll-ship.roll)*kr;
+    ship.y+=(h0-ship.y)*k; ship.pitch+=(pitch-ship.pitch)*kr; ship.roll+=(roll+ship.heel-ship.roll)*kr;
   }
   ship.vy=hadPose&&sdt>0?(ship.y-oldY)/sdt:0;
   shipMatrix();
@@ -422,23 +544,49 @@ function updateShip(dt,sdt){
             nx:-fx*0.75+rx*side*0.66,nz:-fz*0.75+rz*side*0.66,power:clamp(ship.speed/4,0.2,1),kind:0,
             age:0,life:3.4,seed:Math.random(),layer:0});
         }
+        /* Bow wave: a bright, fine sheet peeling away from the stem. */
+        if(ship.speed>1.4){
+          const bx=ship.x+fx*8.2*cls.hull[0],bz=ship.z+fz*8.2*cls.hull[0];
+          for(const side of [-1,1]) putSurf(coastFoam,MAX_COAST_FOAM,{x:bx+rx*side*0.9,y:surfH(bx,bz,simT),z:bz+rz*side*0.9,
+            width:1.1+ship.speed*0.12,nx:fx*0.55+rx*side*0.8,nz:fz*0.55+rz*side*0.8,
+            power:clamp(ship.speed/5,0.18,0.9),kind:0,age:0,life:2.4,seed:Math.random(),layer:0});
+          addFoam(bx,bz,1.4,0.05+ship.speed*0.02);
+        }
       }
     }
   }
 }
 Hooks.on('frame',updateShip);
 
+/* How hard the canvas is drawing: eased sail, a windy sky and sheeted-in
+   sails all make the cloth belly out, while a furled or becalmed ship hangs
+   slack. Kept as one function so the motion-vector pass displaces the sails
+   exactly like the colour pass. */
+function sailBillow(){
+  const wind=clamp((typeof envS==='undefined'?10:envS.wind)/20,0,1.4);
+  const trim=0.28+0.72*clamp(ship.throttle,0,1);
+  return clamp(trim*(0.45+wind*0.85)*(ship.anchored?0.62:1),0.10,1.35);
+}
 function drawShip(mode,mirror,submerge=cameraSubmerge()){
   if(!ship.enabled||ship.status!=='ready') return;
+  const cls=shipClass(),hull=cls.hull;
   gl.useProgram(pShip); setSky(pShip);
   gl.uniformMatrix4fv(L(pShip,'uVP'),false,VP); gl.uniformMatrix4fv(L(pShip,'uModel'),false,ship.matrix);
   gl.uniform3f(L(pShip,'uCamEff'),eye[0],mirror?-eye[1]:eye[1],eye[2]);
   gl.uniform1f(L(pShip,'uMirror'),mirror); gl.uniform1f(L(pShip,'uMode'),mode);
   gl.uniform1f(L(pShip,'uUnderwater'),submerge);
   gl.uniform1f(L(pShip,'uWind'),clamp(envS.wind/20,0,1.4));
+  gl.uniform1f(L(pShip,'uBillow'),sailBillow());
+  gl.uniform1f(L(pShip,'uSailTrans'),clamp(0.35+envS.wind/26,0.35,1));
   gl.uniform1i(L(pShip,'uAlbedo'),6); gl.uniform1i(L(pShip,'uNormalMap'),7); gl.uniform1i(L(pShip,'uMaterial'),8);
   for(let i=0;i<ship.meshes.length;i++){
-    const m=ship.meshes[i]; gl.uniform1f(L(pShip,'uSail'),i===2?1:0);
+    const m=ship.meshes[i],sail=i===2;
+    gl.uniform1f(L(pShip,'uSail'),sail?1:0);
+    /* Hull, rigging and canvas each get their own proportions and tint. */
+    gl.uniform3f(L(pShip,'uMeshScale'),hull[0],hull[1],hull[2]);
+    if(sail) gl.uniform3f(L(pShip,'uMeshScale'),hull[0],hull[1]*cls.mast,hull[2]);
+    const tint=sail?cls.sailTint:(i===1?cls.rigTint:cls.hullTint);
+    gl.uniform3fv(L(pShip,'uTint'),tint);
     for(let j=0;j<3;j++){gl.activeTexture(gl.TEXTURE6+j);gl.bindTexture(gl.TEXTURE_2D,m.maps[j]);}
     gl.bindVertexArray(m.vao); gl.drawElements(gl.TRIANGLES,m.count,gl.UNSIGNED_SHORT,m.offset);
   }
@@ -453,8 +601,12 @@ function drawShipMotion(){
   gl.uniform2f(L(pShipMotion,'uRes'),canvas.width,canvas.height);
   gl.uniform1f(L(pShipMotion,'uTime'),simT);gl.uniform1f(L(pShipMotion,'uPrevTime'),ship.motionPrev?ship.prevTime:simT);
   gl.uniform1f(L(pShipMotion,'uWind'),clamp(envS.wind/20,0,1.4));gl.uniform1i(L(pShipMotion,'uAlbedo'),6);
+  gl.uniform1f(L(pShipMotion,'uBillow'),sailBillow());
+  const cls=shipClass(),hull=cls.hull;
   for(let i=0;i<ship.meshes.length;i++){
-    const m=ship.meshes[i];gl.uniform1f(L(pShipMotion,'uSail'),i===2?1:0);
+    const m=ship.meshes[i],sail=i===2;
+    gl.uniform1f(L(pShipMotion,'uSail'),sail?1:0);
+    gl.uniform3f(L(pShipMotion,'uMeshScale'),hull[0],hull[1]*(sail?cls.mast:1),hull[2]);
     gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,m.maps[0]);
     gl.bindVertexArray(m.vao);gl.drawElements(gl.TRIANGLES,m.count,gl.UNSIGNED_SHORT,m.offset);
   }
@@ -480,7 +632,8 @@ function collideShip(b,dt){
      than the complete local contact box (10.5 × 7 × 2.7 m), even at its
      corners, so remote balls need no matrix transform or deck lookup. */
   const m=ship.matrix,dx=b.x-m[12],dy=b.y-m[13],dz=b.z-m[14];
-  if(dx*dx+dy*dy+dz*dz>13.1*13.1) return;
+  const reach=13.4*ship.hullMax;
+  if(dx*dx+dy*dy+dz*dz>reach*reach) return;
   const p=shipLocal(b.x,b.y,b.z);
   if(Math.abs(p[0])>10.5||Math.abs(p[2])>2.7||p[1]<0.5||p[1]>7) return;
   const floor=shipDeckAt(p[0],p[2],p[1]-b.r+0.15);

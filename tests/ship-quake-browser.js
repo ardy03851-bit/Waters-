@@ -183,7 +183,9 @@ function assertFrame(f){assert.equal(f.state,'running',f.detail);assert.equal(f.
       await page.locator('#bExplore').tap();await readyShip(page);assertFrame(await frame(page));
       let result=await page.evaluate(()=>({safe:AquaBoot.safeMode,uploads:testUploads.slice(),visible:getComputedStyle(document.getElementById('exploreTouch')).display,
         position:explore.pos.slice(),yaw:explore.yaw}));
-      assert.equal(result.safe,true);assert.equal(result.visible,'flex');assert.equal(result.uploads.length,9);
+      assert.equal(result.safe,true);assert.equal(result.visible,'flex');
+      /* Nine ship maps, plus possibly the batched ball atlas canvas. */
+      assert.ok(result.uploads.length>=9&&result.uploads.length<=10);
       assert.ok(result.uploads.every(([w,h])=>w<=512&&h<=512),'all ship maps obey low-memory limits');
       await page.setViewportSize({width:320,height:568});
       const fits=await page.evaluate(()=>['#exploreStatus','.explore-mobile'].every(sel=>{

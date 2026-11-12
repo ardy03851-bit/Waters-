@@ -8,6 +8,9 @@
    ============================================================ */
 const explore={active:false,mode:'swim',pos:[0,1,7],local:[0,1.7,0],yaw:0,pitch:-0.02,
   helmView:'chase',chaseYaw:-0.45,chasePitch:0.30,
+  /* Smoothed chase camera, so the view carries its own momentum instead of
+     being welded to the hull. */
+  chaseCam:{ready:false,eye:[0,0,0],target:[0,0,0]},
   velocity:[0,0,0],keys:new Set(),touchKeys:new Map(),speed:1,sensitivity:1,foamClock:0,lastStatus:'',lastControls:''};
 const EXPLORE_KEYS=new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' ','shift','e','b']);
 const exploreButtons=document.querySelectorAll('[data-swim]');
@@ -56,7 +59,7 @@ function enterExplore(quiet=false){
 function exitExplore(){
   if(!explore.active) return;
   ++helmRequest;
-  explore.active=false;clearExploreInput();explore.velocity.fill(0);
+  explore.active=false;clearExploreInput();explore.velocity.fill(0);explore.chaseCam.ready=false;
   setShipAnchor(true);
   if(typeof closeVoyageChart==='function') closeVoyageChart(false);
   ptrs.clear(); canvas.style.cursor='grab';
@@ -95,6 +98,7 @@ function takeHelm(){
   if(!landing){toast('No clear place to take the helm');return false;}
   explore.local=landing;explore.mode='helm';explore.yaw=ship.heading;explore.pitch=0.04;
   explore.helmView='chase';explore.chaseYaw=-0.45;explore.chasePitch=0.30;
+  explore.chaseCam.ready=false;
   explore.velocity.fill(0);clearExploreInput();updateShip(0,0);
   explore.pos=shipPoint(landing[0],landing[1]+1.55,landing[2]);
   document.body.classList.add('helming');$('helmHUD').setAttribute('aria-hidden','false');
@@ -120,6 +124,7 @@ function toggleHelm(){
 function toggleHelmView(){
   if(!explore.active||explore.mode!=='helm') return;
   explore.helmView=explore.helmView==='chase'?'deck':'chase';
+  explore.chaseCam.ready=false;
   havePrev=false;
   if(typeof updateHelmHUD==='function') updateHelmHUD();
   canvas.focus({preventScroll:true});
@@ -266,18 +271,34 @@ function computeExploreCamera(){
   let target;
   if(explore.mode==='helm'&&explore.helmView==='chase'){
     /* A follow camera stays attached to the sailing ship but can be orbited
-       independently with a drag. The deck view remains truly first person. */
-    const centre=shipPoint(0,5.2,0),a=ship.heading+explore.chaseYaw,cp=Math.cos(explore.chasePitch),distance=45;
-    eye=[centre[0]-Math.sin(a)*cp*distance,centre[1]+Math.sin(explore.chasePitch)*distance,
+       independently with a drag. The deck view remains truly first person.
+       The mount is damped: it trails the hull, widens with speed and lets the
+       masthead lead the horizon, which is what makes a fast reach feel fast. */
+    const centre=shipPoint(0,5.2,0),a=ship.heading+explore.chaseYaw,cp=Math.cos(explore.chasePitch);
+    const distance=45+clamp(ship.speed,0,7)*1.5;
+    const wantEye=[centre[0]-Math.sin(a)*cp*distance,centre[1]+Math.sin(explore.chasePitch)*distance,
       centre[2]+Math.cos(a)*cp*distance];
-    eye[1]=Math.max(eye[1],surfH(eye[0],eye[2],simT)+0.8,islands.active?islandGround(eye[0],eye[2])+1.2:-1000);
+    wantEye[1]=Math.max(wantEye[1],surfH(wantEye[0],wantEye[2],simT)+0.8,islands.active?islandGround(wantEye[0],wantEye[2])+1.2:-1000);
+    const wantTarget=[centre[0],centre[1],centre[2]];
+    const cam=explore.chaseCam,dt=clamp(frameInterval||0.016,0.001,0.1);
+    if(!cam.ready){cam.eye=wantEye.slice();cam.target=wantTarget.slice();cam.ready=true;}
+    else{
+      const ke=1-Math.exp(-dt*4.6),kt=1-Math.exp(-dt*7.5);
+      for(let i=0;i<3;i++){cam.eye[i]+=(wantEye[i]-cam.eye[i])*ke;cam.target[i]+=(wantTarget[i]-cam.target[i])*kt;}
+    }
     const shake=quakeCameraOffset(centre[0],centre[2]);
-    eye=[eye[0]+shake[0],eye[1]+shake[1],eye[2]+shake[2]];
-    target=[centre[0]+shake[0],centre[1]+shake[1],centre[2]+shake[2]];
+    eye=[cam.eye[0]+shake[0],cam.eye[1]+shake[1],cam.eye[2]+shake[2]];
+    target=[cam.target[0]+shake[0],cam.target[1]+shake[1],cam.target[2]+shake[2]];
     let fx=target[0]-eye[0],fy=target[1]-eye[1],fz=target[2]-eye[2],len=Math.hypot(fx,fy,fz)||1;
     fx/=len;fy/=len;fz/=len;camF=[fx,fy,fz];
     len=Math.hypot(fx,fz)||1;camR=[-fz/len,0,fx/len];
     camU=[-camR[2]*fy,camR[2]*fx-camR[0]*fz,camR[0]*fy];
+    /* Follow the heel of the deck a little, but never so much that the
+       horizon tips over. */
+    const rollAmount=clamp(ship.roll*0.55,-0.10,0.10),cr=Math.cos(rollAmount),sr=Math.sin(rollAmount);
+    const r0=camR,u0=camU;
+    camR=[r0[0]*cr+u0[0]*sr,r0[1]*cr+u0[1]*sr,r0[2]*cr+u0[2]*sr];
+    camU=[u0[0]*cr-r0[0]*sr,u0[1]*cr-r0[1]*sr,u0[2]*cr-r0[2]*sr];
   }else{
     const shake=quakeCameraOffset(explore.pos[0],explore.pos[2]);
     eye=[explore.pos[0]+shake[0],explore.pos[1]+shake[1],explore.pos[2]+shake[2]];
@@ -285,8 +306,13 @@ function computeExploreCamera(){
     camF=[sy*cp,sp,-cy*cp];camR=[cy,0,sy];camU=[-sy*sp,cp,cy*sp];
     target=[eye[0]+camF[0],eye[1]+camF[1],eye[2]+camF[2]];
   }
-  aspect=canvas.width/canvas.height;tanH=Math.tan(fovDeg*Math.PI/360)*Math.max(1,1.15/aspect);
-  VP=M4.mul(M4.persp(2*Math.atan(tanH),aspect,0.1,3000),M4.look(eye,target,[0,1,0]));
+  /* A slightly wider lens under sail: speed reads in the edges of the frame. */
+  const speedFov=explore.active&&explore.mode==='helm'?clamp((ship.speed-1)*0.85,0,7):0;
+  aspect=canvas.width/canvas.height;
+  tanH=Math.tan((fovDeg+speedFov)*Math.PI/360)*Math.max(1,1.15/aspect);
+  /* The camera's own up vector carries the heel roll computed above; using a
+     world up here would silently discard it. */
+  VP=M4.mul(M4.persp(2*Math.atan(tanH),aspect,0.1,3000),M4.look(eye,target,camU));
 }
 function cameraSubmerge(){
   return explore.active&&explore.mode==='swim'?sstep(-0.08,0.38,surfH(eye[0],eye[2],simT)-eye[1]):0;
