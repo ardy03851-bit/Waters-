@@ -9,7 +9,11 @@ let fovDeg=50, autoOrbit=false, followBall=false, launchMode='drop', throwSpeed=
 const HOME_TARGET=[0,0.3,0], ISLAND_TARGET=[0,1,-16];
 /* Keep the existing archipelago orbit available when the ship is also on. */
 let cameraFocus='islands';
-function cameraFramesShip(){return typeof ship!=='undefined'&&ship.enabled&&(cameraFocus==='ship'||!islands.active);}
+function cameraFramesShip(){
+  return typeof ship!=='undefined'&&ship.enabled&&(
+    (typeof explore!=='undefined'&&explore.active&&(explore.mode==='helm'||explore.mode==='deck'))||
+    cameraFocus==='ship'||!islands.active);
+}
 function computeCamera(){
   if(typeof explore!=='undefined'&&explore.active){computeExploreCamera();return;}
   const cp=Math.cos(cam.pitch);
@@ -48,7 +52,8 @@ function spawnAtPointer(px,py){
   const d=rayFrom(px,py);
   if(launchMode==='throw'){
     /* throw from the camera along the tap direction (start inside the play area if the camera is far out) */
-    const far=Math.hypot(eye[0],eye[2]), t0=islands.active?1.2:Math.max(1.2,far-18);
+    const centre=cameraFramesShip()?[ship.x,ship.z]:[0,0];
+    const far=Math.hypot(eye[0]-centre[0],eye[2]-centre[1]), t0=islands.active?1.2:Math.max(1.2,far-18);
     const b=spawnBall(eye[0]+d[0]*t0,Math.max(eye[1]+d[1]*t0-0.25,0.6),eye[2]+d[2]*t0,selType,d[0]*throwSpeed,d[1]*throwSpeed+2.2,d[2]*throwSpeed);
     b.wx=d[2]*6; b.wz=-d[0]*6;
     return;
@@ -74,9 +79,10 @@ function spawnAtPointer(px,py){
     x=eye[0]+d[0]*t; z=eye[2]+d[2]*t;
   } else if(d[1]<-0.002){ const t=-eye[1]/d[1]; x=eye[0]+d[0]*t; z=eye[2]+d[2]*t; }
   else { x=eye[0]+d[0]*10; z=eye[2]+d[2]*10; }
-  const rr=Math.hypot(x,z), limit=islands.active?75:10;
-  if(rr>limit){x*=limit/rr;z*=limit/rr;}
-  const surface=islands.active?Math.max(islandGround(x,z),surfH(x,z,simT)):0;
+  const centre=cameraFramesShip()?[ship.x,ship.z]:[0,0],dx=x-centre[0],dz=z-centre[1];
+  const rr=Math.hypot(dx,dz),limit=islands.active?75:10;
+  if(rr>limit){x=centre[0]+dx*limit/rr;z=centre[1]+dz*limit/rr;}
+  const surface=islands.active?Math.max(islandGround(x,z),surfH(x,z,simT)):surfH(x,z,simT);
   spawnBall(x+(Math.random()-0.5)*0.2,surface+4.2+Math.random()*0.6,z+(Math.random()-0.5)*0.2,selType,0,0,0);
 }
 /* per-frame camera behaviour: easing, auto-orbit, follow the newest ball */
@@ -123,7 +129,15 @@ canvas.addEventListener('pointermove',e=>{
   const dx=e.clientX-p.x,dy=e.clientY-p.y; p.x=e.clientX;p.y=e.clientY;
   if(Math.hypot(p.x-p.sx,p.y-p.sy)>7) p.moved=true;
   if(typeof explore!=='undefined'&&explore.active){
-    if(ptrs.size===1){explore.yaw+=dx*0.0045*explore.sensitivity;explore.pitch=clamp(explore.pitch-dy*0.0045*explore.sensitivity,-1.4,1.4);}
+    if(ptrs.size===1){
+      if(explore.mode==='helm'&&explore.helmView==='chase'){
+        explore.chaseYaw-=dx*0.005*explore.sensitivity;
+        explore.chasePitch=clamp(explore.chasePitch+dy*0.0045*explore.sensitivity,0.08,1.10);
+      }else{
+        explore.yaw+=dx*0.0045*explore.sensitivity;
+        explore.pitch=clamp(explore.pitch-dy*0.0045*explore.sensitivity,-1.4,1.4);
+      }
+    }
     return;
   }
   if(grab&&grab.pid===e.pointerId){ setGrabTarget(e.clientX,e.clientY); return; }

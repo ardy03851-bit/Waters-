@@ -76,7 +76,16 @@ function stepBall(b,dt){
   let ay=(-b.m*grav+RHO_W*waterRho*grav*Vs)/meff;
   let ax=RHO_W*Vs*S0.ax/meff, az=RHO_W*Vs*S0.az/meff;
   const dist=Math.hypot(b.x,b.z), playRadius=islands.active?80:10;
-  if(dist>playRadius){ const k=(dist-playRadius)*0.9; ax-=b.x/dist*k; az-=b.z/dist*k; }
+  /* Keep the original sandbox tether, but give a sailing ship its own moving
+     neighbourhood. A ball on the deck must not be pulled to the origin or
+     deleted merely because the vessel has travelled beyond the old bounds. */
+  const withShip=typeof ship!=='undefined'&&ship.enabled&&ship.status==='ready';
+  const sx=withShip?b.x-ship.x:0,sz=withShip?b.z-ship.z:0,shipDist=withShip?Math.hypot(sx,sz):Infinity;
+  if(dist>playRadius&&shipDist>18){
+    const homeExcess=dist-playRadius,shipExcess=shipDist-18;
+    if(homeExcess<=shipExcess){const k=homeExcess*0.9;ax-=b.x/dist*k;az-=b.z/dist*k;}
+    else {const k=shipExcess*0.9;ax-=sx/shipDist*k;az-=sz/shipDist*k;}
+  }
   if(b.grab){ const g=b.grab; ax+=150*(g.x-b.x)-20*b.vx; ay+=150*(g.y-b.y)-20*b.vy; az+=150*(g.z-b.z)-20*b.vz; }
   b.vx+=ax*dt;b.vy+=ay*dt;b.vz+=az*dt;
 
@@ -151,7 +160,9 @@ function stepBall(b,dt){
   /* Balls left on a distant island get time to drift back to the normal
      play area when the archipelago is removed, rather than disappearing. */
   if(!islands.active&&b.islandRecovery&&dist<28) b.islandRecovery=false;
-  if(!isFinite(b.x+b.y+b.z+b.vx+b.vy+b.vz)||dist>(islands.active||b.islandRecovery?140:28)||b.y<-24) b.dead=true;
+  if(b.shipRecovery&&dist<(islands.active?140:28)) b.shipRecovery=false;
+  const maxDistance=b.shipRecovery?SHIP_LIMIT+64:(islands.active||b.islandRecovery?140:28);
+  if(!isFinite(b.x+b.y+b.z+b.vx+b.vy+b.vz)||(dist>maxDistance&&shipDist>32)||b.y<-24) b.dead=true;
 }
 
 function collide(){
