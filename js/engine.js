@@ -26,7 +26,7 @@ const Hooks={
 };
 
 window.Aqua={
-  version:'1.4.0',
+  version:'1.5.0',
   hooks:Hooks,
   /* live view of the simulated balls */
   get balls(){ return balls; },
@@ -45,6 +45,12 @@ window.Aqua={
     const i=clamp(Math.round(index),0,SHIP_CLASSES.length-1);
     userSet('shipClass',i);
     return SHIP_CLASSES[i].name;
+  },
+  /* harbour traffic: Aqua.boats() · Aqua.boats(true) · Aqua.boats('list') */
+  boats(on){
+    if(on==='list') return BOAT_FLEET.filter(n=>BOAT_CLASSES[n]).map(n=>n+' · '+BOAT_CLASSES[n].label);
+    userSet('boats',on===undefined?!boats.enabled:!!on);
+    return boats.enabled;
   },
   /* aqua biome helpers: Aqua.biome('moss') · Aqua.biome() lists them */
   biome(id){

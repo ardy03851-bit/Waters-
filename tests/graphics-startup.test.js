@@ -64,8 +64,12 @@ test('startup completes in order and reports missing scripts or WebGL clearly',(
   while(f.ctx.AquaBoot.state==='loading') f.scripts.at(-1).onload();
   assert.equal(f.ctx.AquaBoot.state,'running');
   assert.equal(starts,1);
-  assert.equal(f.scripts.length,21);
+  assert.equal(f.scripts.length,23);
   assert.ok(f.scripts.findIndex(s=>s.src==='js/island-scenery.js')>f.scripts.findIndex(s=>s.src==='js/island-details.js'));
+  /* The boat fleet needs the shader helpers and the wave sampler, and must be
+     defined before the renderer that draws it. */
+  assert.ok(f.scripts.findIndex(s=>s.src==='js/boats.js')>f.scripts.findIndex(s=>s.src==='js/shaders.js'));
+  assert.ok(f.scripts.findIndex(s=>s.src==='js/boats.js')<f.scripts.findIndex(s=>s.src==='js/render.js'));
   f.error(new Error('runtime failure'));
   assert.equal(f.elements.failTitle.textContent,'Graphics stopped');
   assert.equal(f.elements.err.textContent,'runtime failure');

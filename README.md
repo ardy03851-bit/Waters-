@@ -39,6 +39,29 @@ The ship's **open main deck** uses collision sampled from the actual mesh. Its e
 
 The **Blue-water voyage** and **Storm voyage** scene presets also bring the ship into view. You can switch it on or off in **Settings → Scene** without entering exploration. The ship is Poly Haven's **Dutch Ship Medium**, a CC0 model by James Ray Cock, Nicolò Zubbini and Rico Cilliers. Full source, license, mirror and conversion details are in [`assets/ship/README.md`](assets/ship/README.md); other free 3D sources considered are in [`docs/3d-asset-research.md`](docs/3d-asset-research.md). The approximately 5.4 MB local asset is fetched only when the ship is enabled, and its GPU resources are released when it is hidden. Touch devices upload smaller textures; low-memory graphics mode limits them to 512 px. If an optional ship file fails to load, the ocean remains usable and the ship can be retried.
 
+### Harbour traffic
+
+**Settings → Scene → Harbour traffic** (or **N**, or `Aqua.boats(true)`) puts a working
+fleet in the bay: runabouts, a sport boat, a RIB, a day cruiser, a harbour tug, a small
+fishing boat, a sailing dinghy, a houseboat, a cargo coaster, a ghost ship and a handful
+of mooring buoys. These are real mesh models from Kenney's CC0 *Watercraft Kit*, not
+re-proportioned hulls, so each has its own silhouette; provenance, licence and the
+conversion are in [`assets/kenney/README.md`](assets/kenney/README.md).
+
+Every craft samples the same Gerstner waves as the water. Four probes on its footprint
+give it heave, pitch and roll, and heavier hulls answer the swell more slowly than a
+dinghy, so a boat sits *in* the sea instead of on top of it. Powered craft keep a course
+inside the bay, ease the throttle in a turn, scan for a clearer bearing when the water
+ahead shoals, give the sailing ship room, and are pushed apart rather than through each
+other; moored craft swing on their lines. Their wakes feed the shared foam budget, so a
+wide fleet can never starve the coast surf.
+
+The fleet is off by default and downloads only when switched on (roughly 400 KB of
+models plus one 512×512 shared colour atlas). Its GPU buffers and the atlas are released
+when it is switched off, only visible craft are drawn, and craft far from the camera step
+their physics at 10 Hz instead of every frame. If a model fails to load, that boat is
+simply skipped and the ocean is unaffected.
+
 ## Seaquakes & island quakes
 
 Use **Seaquake** or **Island quake** in **Settings → Scene** or **Physics**, or press **Q** / **J**. An island quake needs an existing archipelago. Seaquakes create a spreading, fading wavefront shared by the water renderer and CPU wave sampling. Island quakes create temporary surface fissures, irregular dust and rock chips, small impulses for nearby grounded balls, and optional camera movement. Neither event permanently changes terrain or destroys the ship.

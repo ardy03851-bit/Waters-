@@ -7,6 +7,9 @@ These are useful starting points, not an exhaustive survey. Always check the lic
 | [Poly Haven: Dutch Ship Medium](https://polyhaven.com/a/dutch_ship_medium) | Detailed wooden sailing ship, roughly 69K triangles and 24.7 m tall. | CC0. **Included** with locally resized PBR maps; attribution and the precise source files are in [`assets/ship/README.md`](../assets/ship/README.md). |
 | [Poly Haven: Ship Pinnace](https://polyhaven.com/a/ship_pinnace) | Another realistic sailing ship, roughly 184K triangles. | CC0, but substantially heavier for this small WebGL scene. Not included. |
 | [Poly Haven: Dutch Ship Large 01](https://polyhaven.com/a/dutch_ship_large_01) | Larger historical ship, roughly 111K triangles. | CC0, but the medium ship is a better fit for the mobile and memory budget. Not included. |
+| [Kenney: Watercraft Kit](https://kenney.nl/assets/watercraft-kit) | 15 low-poly but well-formed modern craft: motor boats, a RIB, a tug, a fishing boat, a sailing dinghy, a houseboat, a coaster and buoys. | CC0. **Included** in [`assets/kenney/watercraft`](../assets/kenney/README.md) and used by `js/boats.js`. |
+| [Kenney: Pirate Kit](https://kenney.nl/assets/pirate-kit) | Docks, watchtower, barrels, crates, cannon, palms, rocks and sand patches in the same atlas style. | CC0. **Included** in [`assets/kenney/pirate`](../assets/kenney/README.md); staged for island props. |
+| [Kenney: Nature Kit](https://kenney.nl/assets/nature-kit) | Trees, cliffs, rocks, plants, flowers, logs and statues. Flat per-material colours rather than an atlas. | CC0. **Included** in [`assets/kenney/nature`](../assets/kenney/README.md); staged for island props. |
 | [ambientCG](https://ambientcg.com/) | Realistic materials and other 3D resources for future work. | See its [license](https://ambientcg.com/help/en/license); no asset from this library is included here. |
 | [Sketchfab](https://sketchfab.com/) | A broad collection of community-uploaded 3D models. | Licenses vary by individual model; “free” alone does not imply permission to redistribute. No Sketchfab asset is included. |
 
@@ -20,5 +23,11 @@ Aqua's fleet is one downloaded CC0 hull — Poly Haven's *Dutch Ship Medium* —
 - **Materials and UVs** are already correct for that hull; recolouring timber, rigging and canvas per class is a uniform tint, whereas eight models would need eight texture sets and eight triangle budgets.
 - **Collision and deck sampling** stay exact. `shipLocal`/`shipPoint` invert the same scale used by the mesh, so the walkable deck, ball contacts and first-person eye height are consistent at every class.
 - **Download size** does not grow: the 5.4 MB asset is fetched once and the class is a saved number.
+
+Kenney's kits answer the request for *modern* boats, which a re-proportioned 18th-century
+hull cannot: a RIB, a tug and a coaster differ in topology, not just in scale. They are
+CC0 and small (the whole Watercraft kit is 416 KB), so the fleet is a separate loader
+(`js/kit.js`) and a separate catalogue (`BOAT_CLASSES` in `js/boats.js`) rather than more
+entries in `SHIP_CLASSES`, whose classes all share one walkable deck.
 
 The lighter Poly Haven candidates (Pinnace, Dutch Ship Large 01) would each cost another several megabytes of runtime download for a silhouette change that the class system already provides. If a future class needs genuinely different topology (a lateen dhow hull, for example), the loader already handles multiple meshes and would only need another local asset and an entry in `SHIP_CLASSES`.

@@ -138,11 +138,11 @@ function render(){
   /* reflection pass (mirrored islands and balls) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,refl.fb); gl.viewport(0,0,rW,rH);
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  drawIslands(1,1); drawShip(1,1,submerge); drawBalls(1,1);
+  drawIslands(1,1); drawShip(1,1,submerge); drawBoats(1,1,eye); drawBalls(1,1);
   /* scene pass (colour+depth for underwater refraction) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,scene.fb); gl.viewport(0,0,W,Hh);
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  drawIslands(1,0); drawShip(1,0,submerge); drawBalls(1,0);
+  drawIslands(1,0); drawShip(1,0,submerge); drawBoats(1,0,eye); drawBalls(1,0);
 
   /* main pass (into the post target – resolved to the canvas afterwards) */
   gl.bindFramebuffer(gl.FRAMEBUFFER,post.fb); gl.viewport(0,0,W,Hh);
@@ -155,7 +155,7 @@ function render(){
   gl.enable(gl.DEPTH_TEST);
 
   /* Opaque terrain writes depth first, so waves naturally meet the coast. */
-  drawIslands(0,0); drawShip(0,0,submerge);
+  drawIslands(0,0); drawShip(0,0,submerge); drawBoats(0,0,eye);
   gl.useProgram(pWater); setSky(pWater); setQuakeUniform(pWater);
   gl.uniformMatrix4fv(L(pWater,'uVP'),false,VP);
   gl.uniform3fv(L(pWater,'uCam'),eye); gl.uniform3fv(L(pWater,'uCamR'),camR); gl.uniform3fv(L(pWater,'uCamF'),camF);
